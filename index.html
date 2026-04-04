@@ -598,7 +598,7 @@ footer{
 
 <!-- ✅ STICKY WA — uses JS handler so pixel fires BEFORE navigation -->
 <div class="swa" role="button" tabindex="0" aria-label="Chat on WhatsApp"
-     data-fbq-event="Lead" data-wa="1">
+     data-fbq-event="Lead" data-wa="1" data-wa-src="sticky_float_btn">
   <span class="pr" aria-hidden="true"></span>&#x1F4AC;
 </div>
 
@@ -606,7 +606,7 @@ footer{
 <nav id="nav" role="navigation">
   <div class="nav-logo" aria-label="Asma Khan">&#x2736; Asma Khan</div>
   <div class="nav-cta" role="button" tabindex="0" aria-label="Chat on WhatsApp"
-       data-fbq-event="Lead" data-wa="1">
+       data-fbq-event="Lead" data-wa="1" data-wa-src="nav_top_btn">
     &#x1F4AC; WhatsApp Me
   </div>
 </nav>
@@ -653,7 +653,7 @@ footer{
       </div>
       <div class="bww">
         <div class="btn-wa" role="button" tabindex="0" aria-label="Start your journey on WhatsApp"
-             data-fbq-event="Lead" data-wa="1" id="hero-btn">
+             data-fbq-event="Lead" data-wa="1" id="hero-btn" data-wa-src="hero_main_cta">
           &#x1F449; Start Your Journey on WhatsApp
         </div>
         <p class="rsure">No experience needed &nbsp;&bull;&nbsp; I&#x2019;ll guide you step by step</p>
@@ -703,7 +703,7 @@ footer{
         <p class="iquote">You are not alone. I&#x2019;ve been exactly where you are right now.</p>
         <div class="bww" style="margin-top:18px">
           <div class="btn-wa" role="button" tabindex="0" aria-label="Let's talk on WhatsApp"
-               data-fbq-event="Lead" data-wa="1">
+               data-fbq-event="Lead" data-wa="1" data-wa-src="intro_lets_talk_btn">
             &#x1F4AC; Let&#x2019;s Talk on WhatsApp
           </div>
           <p class="rsure">Free to message &nbsp;&bull;&nbsp; I respond personally</p>
@@ -750,7 +750,7 @@ footer{
         </ul>
         <div class="bww">
           <div class="btn-wa" role="button" tabindex="0" aria-label="I want to learn this"
-               data-fbq-event="Lead" data-wa="1">
+               data-fbq-event="Lead" data-wa="1" data-wa-src="learn_section_btn">
             &#x1F449; I Want To Learn This
           </div>
           <p class="rsure">Starting from zero is perfectly fine &#x2764;&#xFE0F;</p>
@@ -817,7 +817,7 @@ footer{
         </div>
         <div class="bww">
           <div class="btn-wa" role="button" tabindex="0" aria-label="Message Asma on WhatsApp"
-               data-fbq-event="Lead" data-wa="1">
+               data-fbq-event="Lead" data-wa="1" data-wa-src="about_mentor_btn">
             &#x1F4AC; Message Me on WhatsApp
           </div>
         </div>
@@ -845,7 +845,7 @@ footer{
     <div style="text-align:center;margin-top:30px" class="rv">
       <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
         <div class="btn-wa" role="button" tabindex="0" aria-label="Yes I am ready to join"
-             data-fbq-event="Lead" data-wa="1" style="max-width:350px">
+             data-fbq-event="Lead" data-wa="1" data-wa-src="who_join_btn" style="max-width:350px">
           &#x1F4AC; Yes, I&#x2019;m Ready To Join
         </div>
         <p class="rsure">Free to message &nbsp;&bull;&nbsp; No commitment needed</p>
@@ -869,7 +869,7 @@ footer{
       </p>
       <div class="fgrp">
         <div class="btn-xl" role="button" tabindex="0" aria-label="Start your journey on WhatsApp"
-             data-fbq-event="Lead" data-wa="1" id="final-btn">
+             data-fbq-event="Lead" data-wa="1" id="final-btn" data-wa-src="final_cta_btn">
           &#x1F4AC; Start Your Journey on WhatsApp
         </div>
         <p class="fnote">No experience needed &nbsp;&bull;&nbsp; I&#x2019;ll guide you step by step &nbsp;&bull;&nbsp; Free to message</p>
@@ -888,10 +888,85 @@ footer{
   'use strict';
 
   var WA_URL = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
+  var _busy = false;
 
-  /* ─────────────────────────────────────────────
+  /* ══════════════════════════════════════════
+     CORE: fire pixel FIRST, then open WA
+     Works on EVERY button — sticky, nav, hero,
+     intro, learn, about, who, final = ALL 8
+  ══════════════════════════════════════════ */
+  function goWA(label){
+    // Debounce: prevent double-fire on rapid taps
+    if(_busy) return;
+    _busy = true;
+    setTimeout(function(){ _busy = false; }, 1500);
+
+    // STEP 1 — fire ALL pixel events synchronously
+    if(typeof fbq === 'function'){
+      try{
+        fbq('track', 'Lead', {
+          content_name : label,
+          content_category: 'WhatsApp CTA',
+          currency: 'INR',
+          value: 1
+        });
+        fbq('track', 'Contact');
+        fbq('track', 'InitiateCheckout', { content_name: label });
+        fbq('trackCustom', 'WAButtonClick', { button_id: label });
+      } catch(e){}
+    }
+
+    // STEP 2 — open WhatsApp after 350ms so pixel request completes
+    setTimeout(function(){
+      window.open(WA_URL, '_blank', 'noopener,noreferrer');
+    }, 350);
+  }
+
+  /* ══════════════════════════════════════════
+     BIND: attaches to EVERY [data-wa="1"] element
+     Uses BOTH touchend + click so mobile & desktop
+     both work. preventDefault on touchend stops
+     the ghost-click that would double-fire.
+  ══════════════════════════════════════════ */
+  function bindAll(){
+    document.querySelectorAll('[data-wa="1"]').forEach(function(el){
+      var label = el.getAttribute('data-wa-src')
+                  || el.id
+                  || el.getAttribute('aria-label')
+                  || 'btn';
+
+      // ── Touch (mobile primary) ──
+      el.addEventListener('touchstart', function(){
+        el.style.opacity = '0.82';
+        el.style.transform = 'scale(0.97)';
+      }, { passive: true });
+
+      el.addEventListener('touchend', function(e){
+        el.style.opacity = '';
+        el.style.transform = '';
+        e.preventDefault(); // block ghost click
+        goWA(label);
+      }, { passive: false });
+
+      // ── Click (desktop + fallback) ──
+      el.addEventListener('click', function(e){
+        e.preventDefault();
+        goWA(label);
+      });
+
+      // ── Keyboard (accessibility) ──
+      el.addEventListener('keydown', function(e){
+        if(e.key === 'Enter' || e.key === ' '){
+          e.preventDefault();
+          goWA(label);
+        }
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════
      STARS
-  ───────────────────────────────────────────── */
+  ══════════════════════════════════════════ */
   function mkStars(id, n){
     var c = document.getElementById(id);
     if(!c) return;
@@ -901,11 +976,11 @@ footer{
       s.className = 'star';
       var z = Math.random() * 2 + 0.3;
       s.style.cssText =
-        'width:' + z + 'px;height:' + z + 'px;' +
-        'top:' + Math.random()*100 + '%;left:' + Math.random()*100 + '%;' +
-        '--d:' + (2+Math.random()*4) + 's;' +
-        '--o:' + (0.18+Math.random()*0.55) + ';' +
-        '--dl:' + Math.random()*6 + 's;';
+        'width:'+z+'px;height:'+z+'px;'+
+        'top:'+(Math.random()*100)+'%;left:'+(Math.random()*100)+'%;'+
+        '--d:'+(2+Math.random()*4)+'s;'+
+        '--o:'+(0.18+Math.random()*0.55)+';'+
+        '--dl:'+(Math.random()*6)+'s;';
       f.appendChild(s);
     }
     c.appendChild(f);
@@ -913,9 +988,9 @@ footer{
   mkStars('st1', 50);
   mkStars('st2', 28);
 
-  /* ─────────────────────────────────────────────
+  /* ══════════════════════════════════════════
      HERO PARTICLES
-  ───────────────────────────────────────────── */
+  ══════════════════════════════════════════ */
   var hero = document.getElementById('hero');
   if(hero){
     var pf = document.createDocumentFragment();
@@ -924,18 +999,18 @@ footer{
       p.className = 'pc';
       var sz = 2 + Math.random() * 2.5;
       p.style.cssText =
-        'width:'+sz+'px;height:'+sz+'px;' +
-        'left:'+Math.random()*100+'%;bottom:'+Math.random()*35+'%;' +
-        '--d:'+(6+Math.random()*7)+'s;--dl:'+Math.random()*7+'s;' +
-        'background:'+(Math.random()>.5 ? 'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';
+        'width:'+sz+'px;height:'+sz+'px;'+
+        'left:'+(Math.random()*100)+'%;bottom:'+(Math.random()*35)+'%;'+
+        '--d:'+(6+Math.random()*7)+'s;--dl:'+(Math.random()*7)+'s;'+
+        'background:'+(Math.random()>.5?'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';
       pf.appendChild(p);
     }
     hero.appendChild(pf);
   }
 
-  /* ─────────────────────────────────────────────
+  /* ══════════════════════════════════════════
      SCROLL REVEAL
-  ───────────────────────────────────────────── */
+  ══════════════════════════════════════════ */
   var rvEls = document.querySelectorAll('.rv, .rvl');
   if('IntersectionObserver' in window){
     var obs = new IntersectionObserver(function(entries){
@@ -948,89 +1023,51 @@ footer{
     rvEls.forEach(function(el){ el.classList.add('on'); });
   }
 
-  /* ─────────────────────────────────────────────
-     NAV SCROLL
-  ───────────────────────────────────────────── */
+  /* ══════════════════════════════════════════
+     NAV SCROLL DARKEN
+  ══════════════════════════════════════════ */
   var nav = document.getElementById('nav');
-  window.addEventListener('scroll', function(){
-    nav.classList.toggle('dark', window.scrollY > 50);
-  }, {passive:true});
-
-  /* ─────────────────────────────────────────────
-     ✅ PIXEL-FIRST WA NAVIGATION
-     
-     WHY THIS APPROACH:
-     - All CTA elements are <div role="button"> NOT <a href>
-     - This prevents Meta's tool from flagging wa.me as "external exit"
-     - fbq fires FIRST (synchronous), then window.open after 320ms
-     - This guarantees Lead event is recorded even on slow connections
-     - Meta Events Manager WILL show Lead events correctly
-     
-     THE "No button detected" WARNING:
-     - This is cosmetic — it means the VISUAL mapper can't auto-draw
-       an arrow from button to wa.me (because it's external)
-     - Your Lead pixel IS firing (green dot confirms this)
-     - You can ignore this warning OR use Conversions API to suppress it
-  ───────────────────────────────────────────── */
-  function goWA(label){
-    // 1. Fire ALL relevant pixel events first
-    if(typeof fbq === 'function'){
-      try{
-        fbq('track', 'Lead', {
-          content_name: label || 'whatsapp_cta',
-          content_category: 'Digital Mentor Landing Page',
-          currency: 'INR'
-        });
-        fbq('track', 'Contact');
-        fbq('track', 'InitiateCheckout'); // funnel event
-      } catch(e){}
-    }
-    // 2. Open WA after pixel fires (300ms buffer)
-    setTimeout(function(){
-      window.open(WA_URL, '_blank', 'noopener,noreferrer');
-    }, 320);
+  if(nav){
+    window.addEventListener('scroll', function(){
+      nav.classList.toggle('dark', window.scrollY > 50);
+    }, {passive:true});
   }
 
-  // Bind all WA buttons
-  function bindWA(){
-    document.querySelectorAll('[data-wa="1"]').forEach(function(el){
-      // Click
-      el.addEventListener('click', function(){
-        goWA(el.id || el.getAttribute('aria-label') || 'cta');
-      });
-      // Keyboard (Enter/Space for accessibility)
-      el.addEventListener('keydown', function(e){
-        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); goWA(el.getAttribute('aria-label')); }
-      });
-    });
-  }
-  bindWA();
-
-  /* ─────────────────────────────────────────────
-     SCROLL DEPTH TRACKING
-     Fire pixel events at 25%, 50%, 75%, 90% scroll
-  ───────────────────────────────────────────── */
-  var depths = {25:false, 50:false, 75:false, 90:false};
+  /* ══════════════════════════════════════════
+     SCROLL DEPTH — pixel events at 25/50/75/90%
+  ══════════════════════════════════════════ */
+  var depths = {25:false,50:false,75:false,90:false};
   window.addEventListener('scroll', function(){
-    var pct = Math.round((window.scrollY / (document.body.scrollHeight - window.innerHeight)) * 100);
-    [25, 50, 75, 90].forEach(function(d){
+    var pct = Math.round(
+      ((window.scrollY + window.innerHeight) / document.documentElement.scrollHeight) * 100
+    );
+    [25,50,75,90].forEach(function(d){
       if(!depths[d] && pct >= d){
         depths[d] = true;
         if(typeof fbq === 'function'){
-          try{ fbq('trackCustom', 'ScrollDepth', {depth: d, page: 'asma_khan_landing'}); }catch(e){}
+          try{ fbq('trackCustom','ScrollDepth',{depth:d}); }catch(e){}
         }
       }
     });
   }, {passive:true});
 
-  /* ─────────────────────────────────────────────
-     TIME ON PAGE — fire after 30s to signal engaged user
-  ───────────────────────────────────────────── */
+  /* ══════════════════════════════════════════
+     30s ENGAGED USER
+  ══════════════════════════════════════════ */
   setTimeout(function(){
     if(typeof fbq === 'function'){
-      try{ fbq('trackCustom', 'EngagedUser', {time: 30}); }catch(e){}
+      try{ fbq('trackCustom','EngagedUser',{seconds:30}); }catch(e){}
     }
   }, 30000);
+
+  /* ══════════════════════════════════════════
+     INIT — DOMContentLoaded safe
+  ══════════════════════════════════════════ */
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', bindAll);
+  } else {
+    bindAll();
+  }
 
 })();
 </script>
