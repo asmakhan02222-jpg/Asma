@@ -887,76 +887,168 @@ footer{
 (function(){
   'use strict';
 
-  var WA_URL = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
-  var _busy = false;
+  // ══════════════════════════════════════════════════════
+  //  CONFIG — replace GAS_ENDPOINT after you deploy
+  // ══════════════════════════════════════════════════════
+  var WA_URL      = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
+  var GAS_URL     = 'https://script.google.com/macros/s/AKfycbzNswOqEWQ_4JI9yQ4dgY8pLGO-Z4EiYXVlb1rn1cm0PSi1Gfm7xaGNIX49UW9k8d0kIA/exec'; // ← paste deployed URL here
+  var PIXEL_ID    = '2445995189193091';
+  var _busy       = false;  // debounce flag
 
-  /* ══════════════════════════════════════════
-     CORE: fire pixel FIRST, then open WA
-     Works on EVERY button — sticky, nav, hero,
-     intro, learn, about, who, final = ALL 8
-  ══════════════════════════════════════════ */
-  function goWA(label){
-    // Debounce: prevent double-fire on rapid taps
-    if(_busy) return;
-    _busy = true;
-    setTimeout(function(){ _busy = false; }, 1500);
+  // ══════════════════════════════════════════════════════
+  //  UTILITIES
+  // ══════════════════════════════════════════════════════
 
-    // STEP 1 — fire ALL pixel events synchronously
-    if(typeof fbq === 'function'){
-      try{
-        fbq('track', 'Lead', {
-          content_name : label,
-          content_category: 'WhatsApp CTA',
-          currency: 'INR',
-          value: 1
-        });
-        fbq('track', 'Contact');
-        fbq('track', 'InitiateCheckout', { content_name: label });
-        fbq('trackCustom', 'WAButtonClick', { button_id: label });
-      } catch(e){}
-    }
-
-    // STEP 2 — open WhatsApp after 350ms so pixel request completes
-    setTimeout(function(){
-      window.open(WA_URL, '_blank', 'noopener,noreferrer');
-    }, 350);
+  // UUID v4 — unique event_id for every button click (deduplication)
+  function uuid4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
   }
 
-  /* ══════════════════════════════════════════
-     BIND: attaches to EVERY [data-wa="1"] element
-     Uses BOTH touchend + click so mobile & desktop
-     both work. preventDefault on touchend stops
-     the ghost-click that would double-fire.
-  ══════════════════════════════════════════ */
-  function bindAll(){
-    document.querySelectorAll('[data-wa="1"]').forEach(function(el){
-      var label = el.getAttribute('data-wa-src')
-                  || el.id
-                  || el.getAttribute('aria-label')
-                  || 'btn';
+  // Read a cookie by name (for _fbp / _fbc)
+  function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : '';
+  }
 
-      // ── Touch (mobile primary) ──
+  // SHA-256 via SubtleCrypto (async) — for phone pre-hashing
+  async function sha256(str) {
+    if (!str || !window.crypto || !window.crypto.subtle) return '';
+    try {
+      var buf  = new TextEncoder().encode(str.trim().toLowerCase());
+      var hash = await window.crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(hash))
+        .map(function(b){ return b.toString(16).padStart(2,'0'); })
+        .join('');
+    } catch(_) { return ''; }
+  }
+
+  // Normalize phone: digits only + 91 prefix
+  function normalizePhone(phone) {
+    var digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length === 10) digits = '91' + digits;
+    return digits;
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  CAPI SEND — fires server-side event via GAS endpoint
+  //  Uses sendBeacon (fire-and-forget, never blocks user)
+  //  Falls back to async fetch if sendBeacon unavailable
+  // ══════════════════════════════════════════════════════
+  async function sendCAPI(eventName, buttonId) {
+    if (GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') return; // skip if not configured
+
+    var phone       = normalizePhone('919967791679'); // owner's number as default identifier
+    var phoneHashed = await sha256(phone);
+
+    var payload = {
+      event_name   : eventName,
+      event_id     : uuid4(),               // must match what fbq() sends below
+      page_url     : window.location.href,
+      referrer     : document.referrer || '',
+      user_agent   : navigator.userAgent,
+      fbp          : getCookie('_fbp'),
+      fbc          : getCookie('_fbc'),
+      phone        : phone,
+      phone_hashed : phoneHashed,
+      button_id    : buttonId || 'unknown',
+      content_name : 'Digital Skills Program',
+      content_category: 'Online Education',
+      timestamp    : Date.now(),
+    };
+
+    var body = JSON.stringify(payload);
+
+    // sendBeacon — survives page unload, no CORS preflight
+    if (navigator.sendBeacon) {
+      var blob = new Blob([body], { type: 'application/json' });
+      navigator.sendBeacon(GAS_URL, blob);
+    } else {
+      // Fallback fetch (non-blocking)
+      fetch(GAS_URL, {
+        method : 'POST',
+        body   : body,
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+      }).catch(function(){});
+    }
+
+    return payload.event_id;
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  CORE: PIXEL + CAPI + WA — fires in correct order
+  //  1. Generate shared event_id (for deduplication)
+  //  2. Fire browser pixel (fbq) with that event_id
+  //  3. Fire CAPI (sendBeacon) with SAME event_id
+  //  4. Open WhatsApp after 380ms (pixel has time to send)
+  // ══════════════════════════════════════════════════════
+  function goWA(buttonId) {
+    if (_busy) return;
+    _busy = true;
+    setTimeout(function(){ _busy = false; }, 1600);
+
+    var eventId = uuid4();
+
+    // STEP 1: Browser pixel (synchronous)
+    if (typeof fbq === 'function') {
+      try {
+        fbq('track', 'Lead', {
+          content_name     : 'Digital Skills Program',
+          content_category : 'Online Education',
+          currency         : 'INR',
+          value            : 1,
+          eventID          : eventId,   // ← deduplication key
+        });
+        fbq('track', 'Contact',           { eventID: eventId });
+        fbq('track', 'InitiateCheckout',  { eventID: eventId, content_name: buttonId });
+        fbq('trackCustom', 'WAButtonClick', { button_id: buttonId, eventID: eventId });
+      } catch(e) {}
+    }
+
+    // STEP 2: Server-side CAPI (async, non-blocking)
+    sendCAPI('Lead', buttonId).catch(function(){});
+
+    // STEP 3: Open WhatsApp after short delay so pixel request flies out
+    setTimeout(function(){
+      window.open(WA_URL, '_blank', 'noopener,noreferrer');
+    }, 380);
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  BIND ALL WA BUTTONS — every element with data-wa="1"
+  // ══════════════════════════════════════════════════════
+  function bindAll() {
+    document.querySelectorAll('[data-wa="1"]').forEach(function(el) {
+      var label = el.getAttribute('data-wa-src')
+                || el.id
+                || el.getAttribute('aria-label')
+                || 'btn';
+
+      // Visual feedback on touch
       el.addEventListener('touchstart', function(){
-        el.style.opacity = '0.82';
+        el.style.opacity   = '0.82';
         el.style.transform = 'scale(0.97)';
       }, { passive: true });
 
       el.addEventListener('touchend', function(e){
-        el.style.opacity = '';
+        el.style.opacity   = '';
         el.style.transform = '';
-        e.preventDefault(); // block ghost click
+        e.preventDefault(); // block ghost-click
         goWA(label);
       }, { passive: false });
 
-      // ── Click (desktop + fallback) ──
+      // Desktop click
       el.addEventListener('click', function(e){
         e.preventDefault();
         goWA(label);
       });
 
-      // ── Keyboard (accessibility) ──
+      // Keyboard (Enter / Space)
       el.addEventListener('keydown', function(e){
-        if(e.key === 'Enter' || e.key === ' '){
+        if (e.key === 'Enter' || e.key === ' '){
           e.preventDefault();
           goWA(label);
         }
@@ -964,14 +1056,14 @@ footer{
     });
   }
 
-  /* ══════════════════════════════════════════
-     STARS
-  ══════════════════════════════════════════ */
-  function mkStars(id, n){
+  // ══════════════════════════════════════════════════════
+  //  STARS
+  // ══════════════════════════════════════════════════════
+  function mkStars(id, n) {
     var c = document.getElementById(id);
-    if(!c) return;
+    if (!c) return;
     var f = document.createDocumentFragment();
-    for(var i = 0; i < n; i++){
+    for (var i = 0; i < n; i++) {
       var s = document.createElement('div');
       s.className = 'star';
       var z = Math.random() * 2 + 0.3;
@@ -988,14 +1080,14 @@ footer{
   mkStars('st1', 50);
   mkStars('st2', 28);
 
-  /* ══════════════════════════════════════════
-     HERO PARTICLES
-  ══════════════════════════════════════════ */
+  // ══════════════════════════════════════════════════════
+  //  HERO PARTICLES
+  // ══════════════════════════════════════════════════════
   var hero = document.getElementById('hero');
-  if(hero){
+  if (hero) {
     var pf = document.createDocumentFragment();
-    for(var j = 0; j < 10; j++){
-      var p = document.createElement('div');
+    for (var j = 0; j < 10; j++) {
+      var p  = document.createElement('div');
       p.className = 'pc';
       var sz = 2 + Math.random() * 2.5;
       p.style.cssText =
@@ -1008,66 +1100,72 @@ footer{
     hero.appendChild(pf);
   }
 
-  /* ══════════════════════════════════════════
-     SCROLL REVEAL
-  ══════════════════════════════════════════ */
+  // ══════════════════════════════════════════════════════
+  //  SCROLL REVEAL
+  // ══════════════════════════════════════════════════════
   var rvEls = document.querySelectorAll('.rv, .rvl');
-  if('IntersectionObserver' in window){
+  if ('IntersectionObserver' in window) {
     var obs = new IntersectionObserver(function(entries){
       entries.forEach(function(e){
-        if(e.isIntersecting){ e.target.classList.add('on'); obs.unobserve(e.target); }
+        if (e.isIntersecting){ e.target.classList.add('on'); obs.unobserve(e.target); }
       });
-    }, {threshold:0.06, rootMargin:'0px 0px -20px 0px'});
+    }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
     rvEls.forEach(function(el){ obs.observe(el); });
   } else {
     rvEls.forEach(function(el){ el.classList.add('on'); });
   }
 
-  /* ══════════════════════════════════════════
-     NAV SCROLL DARKEN
-  ══════════════════════════════════════════ */
+  // ══════════════════════════════════════════════════════
+  //  NAV SCROLL DARKEN
+  // ══════════════════════════════════════════════════════
   var nav = document.getElementById('nav');
-  if(nav){
+  if (nav) {
     window.addEventListener('scroll', function(){
       nav.classList.toggle('dark', window.scrollY > 50);
-    }, {passive:true});
+    }, { passive: true });
   }
 
-  /* ══════════════════════════════════════════
-     SCROLL DEPTH — pixel events at 25/50/75/90%
-  ══════════════════════════════════════════ */
-  var depths = {25:false,50:false,75:false,90:false};
+  // ══════════════════════════════════════════════════════
+  //  SCROLL DEPTH PIXEL EVENTS (25/50/75/90%)
+  // ══════════════════════════════════════════════════════
+  var depths = { 25: false, 50: false, 75: false, 90: false };
   window.addEventListener('scroll', function(){
     var pct = Math.round(
       ((window.scrollY + window.innerHeight) / document.documentElement.scrollHeight) * 100
     );
-    [25,50,75,90].forEach(function(d){
-      if(!depths[d] && pct >= d){
+    [25, 50, 75, 90].forEach(function(d){
+      if (!depths[d] && pct >= d) {
         depths[d] = true;
-        if(typeof fbq === 'function'){
-          try{ fbq('trackCustom','ScrollDepth',{depth:d}); }catch(e){}
+        if (typeof fbq === 'function') {
+          try { fbq('trackCustom', 'ScrollDepth', { depth: d }); } catch(_){}
         }
+        // Also send depth event to CAPI for richer signals
+        sendCAPI('ScrollDepth_' + d, 'scroll').catch(function(){});
       }
     });
-  }, {passive:true});
+  }, { passive: true });
 
-  /* ══════════════════════════════════════════
-     30s ENGAGED USER
-  ══════════════════════════════════════════ */
+  // ══════════════════════════════════════════════════════
+  //  30s ENGAGED USER
+  // ══════════════════════════════════════════════════════
   setTimeout(function(){
-    if(typeof fbq === 'function'){
-      try{ fbq('trackCustom','EngagedUser',{seconds:30}); }catch(e){}
+    if (typeof fbq === 'function') {
+      try { fbq('trackCustom', 'EngagedUser', { seconds: 30 }); } catch(_){}
     }
+    sendCAPI('EngagedUser', 'time_on_page').catch(function(){});
   }, 30000);
 
-  /* ══════════════════════════════════════════
-     INIT — DOMContentLoaded safe
-  ══════════════════════════════════════════ */
-  if(document.readyState === 'loading'){
+  // ══════════════════════════════════════════════════════
+  //  INIT
+  // ══════════════════════════════════════════════════════
+  if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bindAll);
   } else {
     bindAll();
   }
+
+  // Fire ViewContent CAPI on page load (mirrors browser pixel)
+  sendCAPI('ViewContent', 'page_load').catch(function(){});
 
 })();
 </script>
