@@ -884,171 +884,220 @@ footer{
 </footer>
 
 <script>
-(function(){
+(function () {
   'use strict';
 
-  // ══════════════════════════════════════════════════════
-  //  CONFIG — replace GAS_ENDPOINT after you deploy
-  // ══════════════════════════════════════════════════════
-  var WA_URL      = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
-  var GAS_URL     = 'https://script.google.com/macros/s/AKfycbzNswOqEWQ_4JI9yQ4dgY8pLGO-Z4EiYXVlb1rn1cm0PSi1Gfm7xaGNIX49UW9k8d0kIA/exec'; // ← paste deployed URL here
-  var PIXEL_ID    = '2445995189193091';
-  var _busy       = false;  // debounce flag
+  /* ─────────────────────────────────────────────────────────────
+     CONFIG
+     Replace YOUR_GAS_ENDPOINT_HERE with your deployed Web App URL
+     Example: https://script.google.com/macros/s/AKfy.../exec
+  ───────────────────────────────────────────────────────────── */
+  var GAS_URL  = 'https://script.google.com/macros/s/AKfycbxCOiDyFeJnJ0Ai4ha22wL8lUrZhohI7Zw0Q7PWiusLmFXS7IRZw8N14cpXMWZomesfeg/exec';
+  var WA_URL   = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
+  var _busy    = false;
 
-  // ══════════════════════════════════════════════════════
-  //  UTILITIES
-  // ══════════════════════════════════════════════════════
-
-  // UUID v4 — unique event_id for every button click (deduplication)
+  /* ─────────────────────────────────────────────────────────────
+     UUID v4 — unique event_id per click (deduplication)
+  ───────────────────────────────────────────────────────────── */
   function uuid4() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       var r = Math.random() * 16 | 0;
       return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
     });
   }
 
-  // Read a cookie by name (for _fbp / _fbc)
+  /* ─────────────────────────────────────────────────────────────
+     READ COOKIE (_fbp / _fbc)
+  ───────────────────────────────────────────────────────────── */
   function getCookie(name) {
-    var match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-    return match ? decodeURIComponent(match[1]) : '';
+    var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
   }
 
-  // SHA-256 via SubtleCrypto (async) — for phone pre-hashing
+  /* ─────────────────────────────────────────────────────────────
+     SHA-256 via SubtleCrypto (async, browser-native)
+  ───────────────────────────────────────────────────────────── */
   async function sha256(str) {
     if (!str || !window.crypto || !window.crypto.subtle) return '';
     try {
       var buf  = new TextEncoder().encode(str.trim().toLowerCase());
       var hash = await window.crypto.subtle.digest('SHA-256', buf);
       return Array.from(new Uint8Array(hash))
-        .map(function(b){ return b.toString(16).padStart(2,'0'); })
+        .map(function (b) { return b.toString(16).padStart(2, '0'); })
         .join('');
-    } catch(_) { return ''; }
+    } catch (_) { return ''; }
   }
 
-  // Normalize phone: digits only + 91 prefix
-  function normalizePhone(phone) {
-    var digits = String(phone || '').replace(/\D/g, '');
-    if (digits.length === 10) digits = '91' + digits;
-    return digits;
+  /* ─────────────────────────────────────────────────────────────
+     NORMALIZE PHONE — digits only + 91 prefix
+  ───────────────────────────────────────────────────────────── */
+  function normalizePhone(p) {
+    var d = String(p || '').replace(/\D/g, '');
+    return d.length === 10 ? '91' + d : d;
   }
 
-  // ══════════════════════════════════════════════════════
-  //  CAPI SEND — fires server-side event via GAS endpoint
-  //  Uses sendBeacon (fire-and-forget, never blocks user)
-  //  Falls back to async fetch if sendBeacon unavailable
-  // ══════════════════════════════════════════════════════
-  async function sendCAPI(eventName, buttonId) {
-    if (GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') return; // skip if not configured
+  /* ─────────────────────────────────────────────────────────────
+     SEND TO GAS (CAPI)
 
-    var phone       = normalizePhone('919967791679'); // owner's number as default identifier
+     ✅ FIX 1 — CORS BUG SOLVED:
+     sendBeacon Blob MUST use type:'text/plain;charset=UTF-8'
+     'application/json' triggers CORS preflight (OPTIONS request)
+     GAS has no OPTIONS handler → 405 → doPost() never fires
+     With text/plain → no preflight → GAS receives POST directly
+
+     ✅ FIX 2 — DEDUP BUG SOLVED:
+     eventId is passed IN from goWA() — same id used in fbq()
+     and sendCAPI() → Meta deduplicates correctly → 1 conversion
+
+     ✅ FIX 3 — FETCH FALLBACK FIXED:
+     No Content-Type header on fetch → browser sends text/plain
+     → no CORS preflight → GAS receives it
+  ───────────────────────────────────────────────────────────── */
+  async function sendCAPI(eventName, buttonId, eventId) {
+    if (!GAS_URL || GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') {
+      console.warn('[CAPI] GAS_URL not set — skipping server-side event.');
+      return;
+    }
+
+    // Pre-hash phone client-side (never send raw PII to server)
+    var phone       = normalizePhone('919967791679');
     var phoneHashed = await sha256(phone);
 
     var payload = {
-      event_name   : eventName,
-      event_id     : uuid4(),               // must match what fbq() sends below
-      page_url     : window.location.href,
-      referrer     : document.referrer || '',
-      user_agent   : navigator.userAgent,
-      fbp          : getCookie('_fbp'),
-      fbc          : getCookie('_fbc'),
-      phone        : phone,
-      phone_hashed : phoneHashed,
-      button_id    : buttonId || 'unknown',
-      content_name : 'Digital Skills Program',
+      event_name      : eventName,
+      event_id        : eventId,                    // ✅ shared with fbq() for dedup
+      page_url        : window.location.href,
+      referrer        : document.referrer || '',
+      user_agent      : navigator.userAgent,
+      fbp             : getCookie('_fbp'),
+      fbc             : getCookie('_fbc'),
+      phone           : phone,
+      phone_hashed    : phoneHashed,
+      button_id       : buttonId || 'unknown',
+      content_name    : 'Digital Skills Program',
       content_category: 'Online Education',
-      timestamp    : Date.now(),
+      timestamp       : Date.now(),
     };
 
     var body = JSON.stringify(payload);
+    console.log('[CAPI] Sending event:', eventName, '| button:', buttonId, '| event_id:', eventId);
 
-    // sendBeacon — survives page unload, no CORS preflight
-    if (navigator.sendBeacon) {
-      var blob = new Blob([body], { type: 'application/json' });
-      navigator.sendBeacon(GAS_URL, blob);
-    } else {
-      // Fallback fetch (non-blocking)
-      fetch(GAS_URL, {
-        method : 'POST',
-        body   : body,
-        headers: { 'Content-Type': 'application/json' },
-        keepalive: true,
-      }).catch(function(){});
+    // ── sendBeacon (primary — survives page unload) ──────────────
+    // CRITICAL: type must be 'text/plain' to avoid CORS preflight on GAS
+    if (typeof navigator.sendBeacon === 'function') {
+      var blob   = new Blob([body], { type: 'text/plain;charset=UTF-8' }); // ✅ FIXED
+      var queued = navigator.sendBeacon(GAS_URL, blob);
+      console.log('[CAPI] sendBeacon queued:', queued, '| GAS will receive this as doPost(e)');
+      if (queued) return; // success — don't fall through to fetch
     }
 
-    return payload.event_id;
+    // ── fetch fallback (if sendBeacon unavailable or returned false) ──
+    // No Content-Type header = browser defaults to text/plain = no preflight
+    try {
+      var res = await fetch(GAS_URL, {
+        method   : 'POST',
+        body     : body,
+        keepalive: true,
+        // ✅ FIXED: NO 'Content-Type: application/json' header here
+        // Omitting Content-Type avoids CORS preflight on GAS endpoint
+      });
+      var json = await res.json();
+      console.log('[CAPI] fetch response:', json);
+    } catch (err) {
+      console.warn('[CAPI] fetch failed (non-fatal):', err.message);
+    }
   }
 
-  // ══════════════════════════════════════════════════════
-  //  CORE: PIXEL + CAPI + WA — fires in correct order
-  //  1. Generate shared event_id (for deduplication)
-  //  2. Fire browser pixel (fbq) with that event_id
-  //  3. Fire CAPI (sendBeacon) with SAME event_id
-  //  4. Open WhatsApp after 380ms (pixel has time to send)
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     CORE FUNCTION — fires on every WA button tap/click
+
+     ORDER:
+     1. Generate ONE shared eventId
+     2. Fire browser pixel (fbq) with that eventId
+     3. Fire CAPI via sendBeacon with SAME eventId
+     4. Open WhatsApp after 400ms
+  ───────────────────────────────────────────────────────────── */
   function goWA(buttonId) {
     if (_busy) return;
     _busy = true;
-    setTimeout(function(){ _busy = false; }, 1600);
+    setTimeout(function () { _busy = false; }, 1600);
 
+    // ── STEP 1: Generate shared event_id ──────────────────────
     var eventId = uuid4();
+    console.log('[WA] Button clicked:', buttonId, '| event_id:', eventId);
 
-    // STEP 1: Browser pixel (synchronous)
+    // ── STEP 2: Browser Pixel (synchronous, instant) ──────────
     if (typeof fbq === 'function') {
       try {
         fbq('track', 'Lead', {
-          content_name     : 'Digital Skills Program',
-          content_category : 'Online Education',
-          currency         : 'INR',
-          value            : 1,
-          eventID          : eventId,   // ← deduplication key
+          content_name    : 'Digital Skills Program',
+          content_category: 'Online Education',
+          currency        : 'INR',
+          value           : 1,
+          eventID         : eventId,   // ✅ dedup key — matches CAPI below
         });
-        fbq('track', 'Contact',           { eventID: eventId });
-        fbq('track', 'InitiateCheckout',  { eventID: eventId, content_name: buttonId });
+        fbq('track', 'Contact',          { eventID: eventId });
+        fbq('track', 'InitiateCheckout', { eventID: eventId, content_name: buttonId });
         fbq('trackCustom', 'WAButtonClick', { button_id: buttonId, eventID: eventId });
-      } catch(e) {}
+        console.log('[Pixel] fbq Lead fired | event_id:', eventId);
+      } catch (e) {
+        console.warn('[Pixel] fbq error:', e);
+      }
+    } else {
+      console.warn('[Pixel] fbq not loaded — ad blocker active?');
     }
 
-    // STEP 2: Server-side CAPI (async, non-blocking)
-    sendCAPI('Lead', buttonId).catch(function(){});
+    // ── STEP 3: Server-side CAPI (async, non-blocking) ────────
+    // Pass the SAME eventId so Meta deduplicates correctly
+    sendCAPI('Lead', buttonId, eventId).catch(function (err) {
+      console.warn('[CAPI] sendCAPI error (non-fatal):', err);
+    });
 
-    // STEP 3: Open WhatsApp after short delay so pixel request flies out
-    setTimeout(function(){
+    // ── STEP 4: Open WhatsApp after 400ms ─────────────────────
+    // 400ms gives pixel + beacon time to fire before page navigates
+    setTimeout(function () {
+      console.log('[WA] Opening WhatsApp now');
       window.open(WA_URL, '_blank', 'noopener,noreferrer');
-    }, 380);
+    }, 400);
   }
 
-  // ══════════════════════════════════════════════════════
-  //  BIND ALL WA BUTTONS — every element with data-wa="1"
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     BIND ALL BUTTONS — every [data-wa="1"] element
+     Handles: touch (mobile) + click (desktop) + keyboard
+  ───────────────────────────────────────────────────────────── */
   function bindAll() {
-    document.querySelectorAll('[data-wa="1"]').forEach(function(el) {
+    var buttons = document.querySelectorAll('[data-wa="1"]');
+    console.log('[Init] Binding', buttons.length, 'WA buttons');
+
+    buttons.forEach(function (el) {
       var label = el.getAttribute('data-wa-src')
                 || el.id
                 || el.getAttribute('aria-label')
-                || 'btn';
+                || 'unknown_btn';
 
-      // Visual feedback on touch
-      el.addEventListener('touchstart', function(){
+      // Mobile: touchstart = visual feedback (instant feel)
+      el.addEventListener('touchstart', function () {
         el.style.opacity   = '0.82';
         el.style.transform = 'scale(0.97)';
       }, { passive: true });
 
-      el.addEventListener('touchend', function(e){
+      // Mobile: touchend = fire event + prevent ghost click
+      el.addEventListener('touchend', function (e) {
         el.style.opacity   = '';
         el.style.transform = '';
-        e.preventDefault(); // block ghost-click
+        e.preventDefault(); // ← blocks the 300ms delayed ghost click
         goWA(label);
       }, { passive: false });
 
-      // Desktop click
-      el.addEventListener('click', function(e){
+      // Desktop: click
+      el.addEventListener('click', function (e) {
         e.preventDefault();
         goWA(label);
       });
 
-      // Keyboard (Enter / Space)
-      el.addEventListener('keydown', function(e){
-        if (e.key === 'Enter' || e.key === ' '){
+      // Keyboard: Enter or Space
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           goWA(label);
         }
@@ -1056,9 +1105,9 @@ footer{
     });
   }
 
-  // ══════════════════════════════════════════════════════
-  //  STARS
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     STARS
+  ───────────────────────────────────────────────────────────── */
   function mkStars(id, n) {
     var c = document.getElementById(id);
     if (!c) return;
@@ -1068,11 +1117,11 @@ footer{
       s.className = 'star';
       var z = Math.random() * 2 + 0.3;
       s.style.cssText =
-        'width:'+z+'px;height:'+z+'px;'+
-        'top:'+(Math.random()*100)+'%;left:'+(Math.random()*100)+'%;'+
-        '--d:'+(2+Math.random()*4)+'s;'+
-        '--o:'+(0.18+Math.random()*0.55)+';'+
-        '--dl:'+(Math.random()*6)+'s;';
+        'width:' + z + 'px;height:' + z + 'px;' +
+        'top:' + (Math.random() * 100) + '%;left:' + (Math.random() * 100) + '%;' +
+        '--d:' + (2 + Math.random() * 4) + 's;' +
+        '--o:' + (0.18 + Math.random() * 0.55) + ';' +
+        '--dl:' + (Math.random() * 6) + 's;';
       f.appendChild(s);
     }
     c.appendChild(f);
@@ -1080,9 +1129,9 @@ footer{
   mkStars('st1', 50);
   mkStars('st2', 28);
 
-  // ══════════════════════════════════════════════════════
-  //  HERO PARTICLES
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     HERO PARTICLES
+  ───────────────────────────────────────────────────────────── */
   var hero = document.getElementById('hero');
   if (hero) {
     var pf = document.createDocumentFragment();
@@ -1091,81 +1140,89 @@ footer{
       p.className = 'pc';
       var sz = 2 + Math.random() * 2.5;
       p.style.cssText =
-        'width:'+sz+'px;height:'+sz+'px;'+
-        'left:'+(Math.random()*100)+'%;bottom:'+(Math.random()*35)+'%;'+
-        '--d:'+(6+Math.random()*7)+'s;--dl:'+(Math.random()*7)+'s;'+
-        'background:'+(Math.random()>.5?'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';
+        'width:' + sz + 'px;height:' + sz + 'px;' +
+        'left:' + (Math.random() * 100) + '%;bottom:' + (Math.random() * 35) + '%;' +
+        '--d:' + (6 + Math.random() * 7) + 's;--dl:' + (Math.random() * 7) + 's;' +
+        'background:' + (Math.random() > 0.5 ? 'rgba(139,92,246,.65)' : 'rgba(232,121,160,.65)') + ';';
       pf.appendChild(p);
     }
     hero.appendChild(pf);
   }
 
-  // ══════════════════════════════════════════════════════
-  //  SCROLL REVEAL
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     SCROLL REVEAL
+  ───────────────────────────────────────────────────────────── */
   var rvEls = document.querySelectorAll('.rv, .rvl');
   if ('IntersectionObserver' in window) {
-    var obs = new IntersectionObserver(function(entries){
-      entries.forEach(function(e){
-        if (e.isIntersecting){ e.target.classList.add('on'); obs.unobserve(e.target); }
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('on'); obs.unobserve(e.target); }
       });
     }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
-    rvEls.forEach(function(el){ obs.observe(el); });
+    rvEls.forEach(function (el) { obs.observe(el); });
   } else {
-    rvEls.forEach(function(el){ el.classList.add('on'); });
+    rvEls.forEach(function (el) { el.classList.add('on'); });
   }
 
-  // ══════════════════════════════════════════════════════
-  //  NAV SCROLL DARKEN
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     NAV SCROLL DARKEN
+  ───────────────────────────────────────────────────────────── */
   var nav = document.getElementById('nav');
   if (nav) {
-    window.addEventListener('scroll', function(){
+    window.addEventListener('scroll', function () {
       nav.classList.toggle('dark', window.scrollY > 50);
     }, { passive: true });
   }
 
-  // ══════════════════════════════════════════════════════
-  //  SCROLL DEPTH PIXEL EVENTS (25/50/75/90%)
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     SCROLL DEPTH EVENTS (25 / 50 / 75 / 90%)
+  ───────────────────────────────────────────────────────────── */
   var depths = { 25: false, 50: false, 75: false, 90: false };
-  window.addEventListener('scroll', function(){
+  window.addEventListener('scroll', function () {
     var pct = Math.round(
       ((window.scrollY + window.innerHeight) / document.documentElement.scrollHeight) * 100
     );
-    [25, 50, 75, 90].forEach(function(d){
+    [25, 50, 75, 90].forEach(function (d) {
       if (!depths[d] && pct >= d) {
         depths[d] = true;
         if (typeof fbq === 'function') {
-          try { fbq('trackCustom', 'ScrollDepth', { depth: d }); } catch(_){}
+          try { fbq('trackCustom', 'ScrollDepth', { depth: d }); } catch (_) {}
         }
-        // Also send depth event to CAPI for richer signals
-        sendCAPI('ScrollDepth_' + d, 'scroll').catch(function(){});
+        var depthId = uuid4();
+        sendCAPI('ScrollDepth', 'scroll_' + d + 'pct', depthId).catch(function () {});
+        console.log('[Scroll] Depth reached:', d + '%');
       }
     });
   }, { passive: true });
 
-  // ══════════════════════════════════════════════════════
-  //  30s ENGAGED USER
-  // ══════════════════════════════════════════════════════
-  setTimeout(function(){
+  /* ─────────────────────────────────────────────────────────────
+     30s ENGAGED USER
+  ───────────────────────────────────────────────────────────── */
+  setTimeout(function () {
     if (typeof fbq === 'function') {
-      try { fbq('trackCustom', 'EngagedUser', { seconds: 30 }); } catch(_){}
+      try { fbq('trackCustom', 'EngagedUser', { seconds: 30 }); } catch (_) {}
     }
-    sendCAPI('EngagedUser', 'time_on_page').catch(function(){});
+    sendCAPI('EngagedUser', 'time_30s', uuid4()).catch(function () {});
+    console.log('[Engage] 30s on page — EngagedUser fired');
   }, 30000);
 
-  // ══════════════════════════════════════════════════════
-  //  INIT
-  // ══════════════════════════════════════════════════════
+  /* ─────────────────────────────────────────────────────────────
+     PAGE LOAD — ViewContent CAPI
+  ───────────────────────────────────────────────────────────── */
+  sendCAPI('ViewContent', 'page_load', uuid4()).then(function () {
+    console.log('[CAPI] ViewContent sent on page load');
+  }).catch(function () {});
+
+  /* ─────────────────────────────────────────────────────────────
+     INIT
+  ───────────────────────────────────────────────────────────── */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bindAll);
   } else {
     bindAll();
   }
 
-  // Fire ViewContent CAPI on page load (mirrors browser pixel)
-  sendCAPI('ViewContent', 'page_load').catch(function(){});
+  console.log('[Init] Asma Khan tracking system loaded ✅');
 
 })();
 </script>
