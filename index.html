@@ -884,21 +884,116 @@ footer{
 </footer>
 
 <script>
+/* ╔═══════════════════════════════════════════════════════════════
+   ║  ASMA KHAN — ULTRA PERFORMANCE TRACKING SYSTEM v2.0
+   ║  Lead Quality Scoring + Smart CAPI + Funnel Analytics
+   ╚═══════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  /* ─────────────────────────────────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════
      CONFIG
-     Replace YOUR_GAS_ENDPOINT_HERE with your deployed Web App URL
-     Example: https://script.google.com/macros/s/AKfy.../exec
-  ───────────────────────────────────────────────────────────── */
-  var GAS_URL  = 'https://script.google.com/macros/s/AKfycbxCOiDyFeJnJ0Ai4ha22wL8lUrZhohI7Zw0Q7PWiusLmFXS7IRZw8N14cpXMWZomesfeg/exec';
-  var WA_URL   = 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning';
-  var _busy    = false;
+  ══════════════════════════════════════════════════════════════ */
+  var CFG = {
+    GAS_URL   : 'https://script.google.com/macros/s/AKfycbxWrYeL5Q87i9sXSK67JDVg2rKspz7fC84fm7Y7kYtX7kdY5O9LWU9zfROJSlikyjloSQ/exec',
+    WA_URL    : 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning',
+    PIXEL_ID  : '2445995189193091',
+    PHONE     : '919967791679',
+    PAGE_NAME : 'asma_khan_landing',
+  };
 
-  /* ─────────────────────────────────────────────────────────────
-     UUID v4 — unique event_id per click (deduplication)
-  ───────────────────────────────────────────────────────────── */
+  /* ══════════════════════════════════════════════════════════════
+     LEAD QUALITY SCORE ENGINE
+     Score 0–100 built up continuously as user engages.
+     Sent with every CAPI event so Meta optimizes for quality.
+
+     SCORING BREAKDOWN (total = 100):
+     ┌─────────────────────────────┬───────┐
+     │ Signal                      │ Max   │
+     ├─────────────────────────────┼───────┤
+     │ Time on page                │  25   │
+     │ Scroll depth                │  20   │
+     │ Sections viewed             │  15   │
+     │ Referrer quality            │  15   │
+     │ Device (mobile=real user)   │   5   │
+     │ Repeat visitor              │   5   │
+     │ UTM source quality          │  10   │
+     │ Click intensity             │   5   │
+     └─────────────────────────────┴───────┘
+  ══════════════════════════════════════════════════════════════ */
+  var SCORE = {
+    total        : 0,
+    timePoints   : 0,
+    scrollPoints : 0,
+    sectionPoints: 0,
+    referrerPts  : 0,
+    devicePts    : 0,
+    repeatPts    : 0,
+    utmPts       : 0,
+    clickPts     : 0,
+
+    get: function () {
+      this.total = Math.min(100, Math.round(
+        this.timePoints   +
+        this.scrollPoints +
+        this.sectionPoints+
+        this.referrerPts  +
+        this.devicePts    +
+        this.repeatPts    +
+        this.utmPts       +
+        this.clickPts
+      ));
+      return this.total;
+    },
+
+    label: function () {
+      var s = this.get();
+      if (s >= 70) return 'HIGH';
+      if (s >= 40) return 'MEDIUM';
+      return 'LOW';
+    },
+
+    breakdown: function () {
+      return {
+        total         : this.get(),
+        label         : this.label(),
+        time_pts      : this.timePoints,
+        scroll_pts    : this.scrollPoints,
+        section_pts   : this.sectionPoints,
+        referrer_pts  : this.referrerPts,
+        device_pts    : this.devicePts,
+        repeat_pts    : this.repeatPts,
+        utm_pts       : this.utmPts,
+        click_pts     : this.clickPts,
+      };
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════
+     STATE — everything tracked in one object
+  ══════════════════════════════════════════════════════════════ */
+  var STATE = {
+    startTime       : Date.now(),
+    maxScrollPct    : 0,
+    sectionsViewed  : [],
+    clickCount      : 0,
+    clickHistory    : [],    // [{button, ts}]
+    timeBuckets     : { s10: false, s30: false, s60: false, s120: false },
+    scrollBuckets   : { p25: false, p50: false, p75: false, p90: false, p100: false },
+    exitAttempted   : false,
+    sessionId       : '',
+    isRepeatVisitor : false,
+    connectionSpeed : 'unknown',
+    utmParams       : {},
+    funnelDropPoint : '',
+    lastActiveTs    : Date.now(),
+    waOpened        : false,
+    _busy           : false,
+  };
+
+  /* ══════════════════════════════════════════════════════════════
+     UTILITIES
+  ══════════════════════════════════════════════════════════════ */
   function uuid4() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       var r = Math.random() * 16 | 0;
@@ -906,17 +1001,20 @@ footer{
     });
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     READ COOKIE (_fbp / _fbc)
-  ───────────────────────────────────────────────────────────── */
-  function getCookie(name) {
-    var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  function getCookie(n) {
+    var m = document.cookie.match(new RegExp('(?:^|; )' + n + '=([^;]*)'));
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     SHA-256 via SubtleCrypto (async, browser-native)
-  ───────────────────────────────────────────────────────────── */
+  function getParam(name) {
+    try {
+      return new URLSearchParams(window.location.search).get(name) || '';
+    } catch (_) {
+      var m = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+  }
+
   async function sha256(str) {
     if (!str || !window.crypto || !window.crypto.subtle) return '';
     try {
@@ -928,230 +1026,541 @@ footer{
     } catch (_) { return ''; }
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     NORMALIZE PHONE — digits only + 91 prefix
-  ───────────────────────────────────────────────────────────── */
   function normalizePhone(p) {
     var d = String(p || '').replace(/\D/g, '');
     return d.length === 10 ? '91' + d : d;
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     SEND TO GAS (CAPI)
+  function getDeviceType() {
+    var ua = navigator.userAgent;
+    if (/tablet|ipad/i.test(ua)) return 'tablet';
+    if (/mobile|android|iphone/i.test(ua)) return 'mobile';
+    return 'desktop';
+  }
 
-     ✅ FIX 1 — CORS BUG SOLVED:
-     sendBeacon Blob MUST use type:'text/plain;charset=UTF-8'
-     'application/json' triggers CORS preflight (OPTIONS request)
-     GAS has no OPTIONS handler → 405 → doPost() never fires
-     With text/plain → no preflight → GAS receives POST directly
+  function getConnectionSpeed() {
+    try {
+      var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      return c ? (c.effectiveType || c.type || 'unknown') : 'unknown';
+    } catch (_) { return 'unknown'; }
+  }
 
-     ✅ FIX 2 — DEDUP BUG SOLVED:
-     eventId is passed IN from goWA() — same id used in fbq()
-     and sendCAPI() → Meta deduplicates correctly → 1 conversion
+  function timeOnPage() {
+    return Math.round((Date.now() - STATE.startTime) / 1000);
+  }
 
-     ✅ FIX 3 — FETCH FALLBACK FIXED:
-     No Content-Type header on fetch → browser sends text/plain
-     → no CORS preflight → GAS receives it
-  ───────────────────────────────────────────────────────────── */
-  async function sendCAPI(eventName, buttonId, eventId) {
-    if (!GAS_URL || GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') {
-      console.warn('[CAPI] GAS_URL not set — skipping server-side event.');
-      return;
+  function setLS(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) {}
+  }
+
+  function getLS(key) {
+    try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     INIT SCORING SIGNALS — run once on page load
+  ══════════════════════════════════════════════════════════════ */
+  function initScoring() {
+
+    // ── Session ID ─────────────────────────────────────────────
+    STATE.sessionId = uuid4();
+
+    // ── UTM params ─────────────────────────────────────────────
+    STATE.utmParams = {
+      source   : getParam('utm_source')   || '',
+      medium   : getParam('utm_medium')   || '',
+      campaign : getParam('utm_campaign') || '',
+      content  : getParam('utm_content')  || '',
+      term     : getParam('utm_term')     || '',
+      fbclid   : getParam('fbclid')       || '',
+    };
+
+    // ── UTM Quality Score ───────────────────────────────────────
+    var src = (STATE.utmParams.source || document.referrer || '').toLowerCase();
+    if (/instagram|facebook|fb/.test(src))  SCORE.utmPts = 10; // paid social
+    else if (/google|bing/.test(src))       SCORE.utmPts = 8;  // search intent
+    else if (/whatsapp/.test(src))          SCORE.utmPts = 7;  // WA referral
+    else if (src === '' || src === 'direct')SCORE.utmPts = 4;  // direct
+    else                                    SCORE.utmPts = 2;  // unknown
+
+    // ── Referrer quality ───────────────────────────────────────
+    var ref = document.referrer.toLowerCase();
+    if (/instagram|facebook/.test(ref))     SCORE.referrerPts = 15;
+    else if (/google|bing|yahoo/.test(ref)) SCORE.referrerPts = 12;
+    else if (/whatsapp/.test(ref))          SCORE.referrerPts = 10;
+    else if (ref === '')                    SCORE.referrerPts = 5; // direct
+    else                                    SCORE.referrerPts = 3;
+
+    // ── Device scoring ─────────────────────────────────────────
+    // Mobile = real user browsing (not bot); desktop = also valid
+    var dev = getDeviceType();
+    SCORE.devicePts = (dev === 'mobile') ? 5 : (dev === 'tablet') ? 4 : 3;
+
+    // ── Repeat visitor ─────────────────────────────────────────
+    var visits = getLS('ak_visits') || 0;
+    visits++;
+    setLS('ak_visits', visits);
+    STATE.isRepeatVisitor = visits > 1;
+    if (visits >= 3)      SCORE.repeatPts = 5;  // highly interested
+    else if (visits === 2) SCORE.repeatPts = 3;
+    else                   SCORE.repeatPts = 0;
+
+    // ── Connection speed ───────────────────────────────────────
+    STATE.connectionSpeed = getConnectionSpeed();
+
+    // ── Store last visit timestamp ─────────────────────────────
+    setLS('ak_last_visit', Date.now());
+    setLS('ak_session', STATE.sessionId);
+
+    console.log('[Score] Init complete | UTM:', SCORE.utmPts, '| Referrer:', SCORE.referrerPts,
+                '| Device:', SCORE.devicePts, '| Repeat:', SCORE.repeatPts);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     TIME BUCKET TRACKING — 10s / 30s / 60s / 120s
+     Each bucket increases score and signals engagement to Meta
+  ══════════════════════════════════════════════════════════════ */
+  function initTimeBuckets() {
+    var buckets = [
+      { key: 's10',  ms: 10000,  pts: 3,  label: '10s'  },
+      { key: 's30',  ms: 30000,  pts: 7,  label: '30s'  },
+      { key: 's60',  ms: 60000,  pts: 12, label: '60s'  },
+      { key: 's120', ms: 120000, pts: 25, label: '120s' },
+    ];
+
+    buckets.forEach(function (b) {
+      setTimeout(function () {
+        if (STATE.timeBuckets[b.key]) return;
+        STATE.timeBuckets[b.key] = true;
+        SCORE.timePoints = Math.min(25, SCORE.timePoints + b.pts);
+
+        console.log('[Time] Bucket reached:', b.label, '| Score now:', SCORE.get());
+
+        if (typeof fbq === 'function') {
+          try { fbq('trackCustom', 'TimeEngagement', { bucket: b.label, score: SCORE.get() }); }
+          catch (_) {}
+        }
+
+        // At 60s — send a mid-engagement CAPI signal
+        if (b.key === 's60') {
+          sendCAPI('EngagedUser', 'time_60s', uuid4(), { trigger: 'time_60s' });
+        }
+        // At 120s — very warm lead, send ViewContent upgrade
+        if (b.key === 's120') {
+          sendCAPI('ViewContent', 'time_120s', uuid4(), { trigger: 'time_120s', score: SCORE.get() });
+        }
+      }, b.ms);
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     SCROLL DEPTH TRACKING — 25 / 50 / 75 / 90 / 100%
+  ══════════════════════════════════════════════════════════════ */
+  function initScrollTracking() {
+    var ticking = false;
+
+    window.addEventListener('scroll', function () {
+      STATE.lastActiveTs = Date.now();
+
+      if (!ticking) {
+        requestAnimationFrame(function () {
+          var scrolled = window.scrollY + window.innerHeight;
+          var total    = document.documentElement.scrollHeight;
+          var pct      = Math.round((scrolled / total) * 100);
+
+          if (pct > STATE.maxScrollPct) STATE.maxScrollPct = pct;
+
+          [
+            { key: 'p25',  val: 25,  pts: 4  },
+            { key: 'p50',  val: 50,  pts: 6  },
+            { key: 'p75',  val: 75,  pts: 8  },
+            { key: 'p90',  val: 90,  pts: 10 },
+            { key: 'p100', val: 100, pts: 20 },
+          ].forEach(function (b) {
+            if (!STATE.scrollBuckets[b.key] && pct >= b.val) {
+              STATE.scrollBuckets[b.key] = true;
+              SCORE.scrollPoints = Math.min(20, SCORE.scrollPoints + b.pts);
+
+              console.log('[Scroll]', b.val + '% | scrollPts:', SCORE.scrollPoints, '| Total score:', SCORE.get());
+
+              if (typeof fbq === 'function') {
+                try { fbq('trackCustom', 'ScrollDepth', { depth: b.val, score: SCORE.get() }); }
+                catch (_) {}
+              }
+
+              if (b.val >= 75) {
+                // 75%+ scroll = very engaged, send CAPI signal
+                sendCAPI('ScrollDepth', 'scroll_' + b.val, uuid4(), { scroll_pct: b.val });
+              }
+            }
+          });
+
+          ticking = false;
+        });
+        ticking = true;
+      }
+    }, { passive: true });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION VISIBILITY TRACKING
+     Tracks which sections user actually sees (not just scrolls past)
+  ══════════════════════════════════════════════════════════════ */
+  function initSectionTracking() {
+    var sections = [
+      { id: 'hero',    pts: 0,  name: 'Hero'        },
+      { id: 'intro',   pts: 2,  name: 'Intro'       },
+      { id: 'trust',   pts: 2,  name: 'Trust'       },
+      { id: 'learn',   pts: 3,  name: 'Learn'       },
+      { id: 'testi',   pts: 3,  name: 'Testimonials'},
+      { id: 'about',   pts: 2,  name: 'About'       },
+      { id: 'who',     pts: 2,  name: 'Who'         },
+      { id: 'final',   pts: 1,  name: 'Final CTA'   },
+    ];
+
+    if (!('IntersectionObserver' in window)) return;
+
+    var secObs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var id = entry.target.id;
+        if (STATE.sectionsViewed.indexOf(id) > -1) return; // already seen
+
+        var sec = sections.find(function (s) { return s.id === id; });
+        if (!sec) return;
+
+        STATE.sectionsViewed.push(id);
+        SCORE.sectionPoints = Math.min(15, SCORE.sectionPoints + sec.pts);
+
+        // Track funnel drop point (last section seen before exit)
+        STATE.funnelDropPoint = sec.name;
+
+        console.log('[Section] Viewed:', sec.name, '| sectionPts:', SCORE.sectionPoints);
+
+        secObs.unobserve(entry.target);
+      });
+    }, { threshold: 0.4 }); // 40% visible = "viewed"
+
+    sections.forEach(function (s) {
+      var el = document.getElementById(s.id);
+      if (el) secObs.observe(el);
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     EXIT INTENT DETECTION
+     Desktop: mouse leaves top of viewport
+     Mobile: visibility change (tab switch, home button)
+  ══════════════════════════════════════════════════════════════ */
+  function initExitIntent() {
+    var exitFired = false;
+
+    function onExit(trigger) {
+      if (exitFired) return;
+      exitFired = true;
+      STATE.exitAttempted = true;
+
+      var score = SCORE.get();
+      console.log('[Exit] Intent detected via:', trigger, '| Score:', score, '| Scroll:', STATE.maxScrollPct + '%');
+
+      // Send exit intent CAPI — valuable for retargeting
+      sendCAPI('ExitIntent', 'exit_' + trigger, uuid4(), {
+        trigger         : trigger,
+        score_at_exit   : score,
+        scroll_at_exit  : STATE.maxScrollPct,
+        time_at_exit    : timeOnPage(),
+        sections_seen   : STATE.sectionsViewed.join(','),
+        last_section    : STATE.funnelDropPoint,
+      });
+
+      if (typeof fbq === 'function') {
+        try {
+          fbq('trackCustom', 'ExitIntent', {
+            trigger     : trigger,
+            score       : score,
+            scroll_pct  : STATE.maxScrollPct,
+          });
+        } catch (_) {}
+      }
     }
 
-    // Pre-hash phone client-side (never send raw PII to server)
-    var phone       = normalizePhone('919967791679');
-    var phoneHashed = await sha256(phone);
+    // Desktop: mouse leaves viewport from top
+    document.addEventListener('mouseleave', function (e) {
+      if (e.clientY <= 5) onExit('mouse_leave_top');
+    });
 
-    var payload = {
+    // Mobile + Desktop: tab hidden / app backgrounded
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') onExit('visibility_hidden');
+    });
+
+    // Mobile: back button / page unload
+    window.addEventListener('pagehide', function () { onExit('page_hide'); });
+    window.addEventListener('beforeunload', function () { onExit('before_unload'); });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     CLICK INTENSITY TRACKING
+     Tracks: total clicks, clicks per button, rage clicks
+  ══════════════════════════════════════════════════════════════ */
+  function initClickTracking() {
+    document.addEventListener('click', function () {
+      STATE.clickCount++;
+      STATE.lastActiveTs = Date.now();
+
+      // Click pts: more clicks = more interest (capped at 5)
+      SCORE.clickPts = Math.min(5, Math.floor(STATE.clickCount / 2));
+    }, { passive: true });
+
+    // Rage click detection: 3+ clicks in 1.5 seconds on same element
+    var lastEl = null, rapidCount = 0, rapidTimer = null;
+    document.addEventListener('click', function (e) {
+      if (e.target === lastEl) {
+        rapidCount++;
+        if (rapidCount >= 3) {
+          console.log('[RageClick] Detected on:', e.target.className || e.target.id);
+          SCORE.clickPts = Math.min(5, SCORE.clickPts + 2); // rage = high intent
+          if (typeof fbq === 'function') {
+            try { fbq('trackCustom', 'RageClick', { element: e.target.id || e.target.className }); }
+            catch (_) {}
+          }
+          rapidCount = 0;
+        }
+      } else {
+        lastEl = e.target;
+        rapidCount = 1;
+      }
+      clearTimeout(rapidTimer);
+      rapidTimer = setTimeout(function () { rapidCount = 0; }, 1500);
+    }, { passive: true });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     BUILD FULL PAYLOAD — everything in one object for CAPI
+  ══════════════════════════════════════════════════════════════ */
+  async function buildPayload(eventName, buttonId, eventId, extras) {
+    var phone       = normalizePhone(CFG.PHONE);
+    var phoneHashed = await sha256(phone);
+    var score       = SCORE.get();
+
+    return {
+      // Core event
       event_name      : eventName,
-      event_id        : eventId,                    // ✅ shared with fbq() for dedup
+      event_id        : eventId,
       page_url        : window.location.href,
       referrer        : document.referrer || '',
+
+      // User signals
       user_agent      : navigator.userAgent,
       fbp             : getCookie('_fbp'),
       fbc             : getCookie('_fbc'),
       phone           : phone,
       phone_hashed    : phoneHashed,
-      button_id       : buttonId || 'unknown',
+      language        : navigator.language || '',
+      screen_w        : window.screen ? window.screen.width  : 0,
+      screen_h        : window.screen ? window.screen.height : 0,
+      viewport_w      : window.innerWidth  || 0,
+      viewport_h      : window.innerHeight || 0,
+      device_type     : getDeviceType(),
+      connection      : STATE.connectionSpeed,
+      is_repeat       : STATE.isRepeatVisitor,
+
+      // UTM / attribution
+      utm_source      : STATE.utmParams.source,
+      utm_medium      : STATE.utmParams.medium,
+      utm_campaign    : STATE.utmParams.campaign,
+      utm_content     : STATE.utmParams.content,
+      utm_term        : STATE.utmParams.term,
+      fbclid          : STATE.utmParams.fbclid,
+
+      // Engagement signals
+      button_id       : buttonId || '',
+      time_on_page    : timeOnPage(),
+      max_scroll_pct  : STATE.maxScrollPct,
+      sections_viewed : STATE.sectionsViewed.join(','),
+      sections_count  : STATE.sectionsViewed.length,
+      click_count     : STATE.clickCount,
+      exit_attempted  : STATE.exitAttempted,
+      funnel_drop     : STATE.funnelDropPoint,
+      session_id      : STATE.sessionId,
+      visit_count     : getLS('ak_visits') || 1,
+
+      // Lead quality score
+      lead_score      : score,
+      score_label     : SCORE.label(),
+      score_breakdown : JSON.stringify(SCORE.breakdown()),
+
+      // Content
       content_name    : 'Digital Skills Program',
       content_category: 'Online Education',
-      timestamp       : Date.now(),
+
+      // Extras (per-event custom data)
+      extras          : extras ? JSON.stringify(extras) : '',
     };
+  }
 
-    var body = JSON.stringify(payload);
-    console.log('[CAPI] Sending event:', eventName, '| button:', buttonId, '| event_id:', eventId);
-
-    // ── sendBeacon (primary — survives page unload) ──────────────
-    // CRITICAL: type must be 'text/plain' to avoid CORS preflight on GAS
-    if (typeof navigator.sendBeacon === 'function') {
-      var blob   = new Blob([body], { type: 'text/plain;charset=UTF-8' }); // ✅ FIXED
-      var queued = navigator.sendBeacon(GAS_URL, blob);
-      console.log('[CAPI] sendBeacon queued:', queued, '| GAS will receive this as doPost(e)');
-      if (queued) return; // success — don't fall through to fetch
+  /* ══════════════════════════════════════════════════════════════
+     SEND TO GAS CAPI — sendBeacon (text/plain = no CORS preflight)
+  ══════════════════════════════════════════════════════════════ */
+  async function sendCAPI(eventName, buttonId, eventId, extras) {
+    if (!CFG.GAS_URL || CFG.GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') {
+      console.warn('[CAPI] GAS_URL not configured — skipping.');
+      return;
     }
 
-    // ── fetch fallback (if sendBeacon unavailable or returned false) ──
-    // No Content-Type header = browser defaults to text/plain = no preflight
+    var payload = await buildPayload(eventName, buttonId, eventId, extras);
+    var body    = JSON.stringify(payload);
+
+    console.log('[CAPI] ▶', eventName, '| button:', buttonId, '| score:', payload.lead_score, '| id:', eventId);
+
+    // sendBeacon: text/plain avoids CORS preflight on GAS ✅
+    if (typeof navigator.sendBeacon === 'function') {
+      var blob   = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+      var queued = navigator.sendBeacon(CFG.GAS_URL, blob);
+      if (queued) {
+        console.log('[CAPI] ✅ sendBeacon queued for:', eventName);
+        return;
+      }
+    }
+
+    // Fallback fetch (no Content-Type header = no preflight)
     try {
-      var res = await fetch(GAS_URL, {
-        method   : 'POST',
-        body     : body,
-        keepalive: true,
-        // ✅ FIXED: NO 'Content-Type: application/json' header here
-        // Omitting Content-Type avoids CORS preflight on GAS endpoint
-      });
+      var res  = await fetch(CFG.GAS_URL, { method: 'POST', body: body, keepalive: true });
       var json = await res.json();
-      console.log('[CAPI] fetch response:', json);
+      console.log('[CAPI] ✅ fetch response:', json.success, '| event_id:', json.event_id);
     } catch (err) {
       console.warn('[CAPI] fetch failed (non-fatal):', err.message);
     }
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     CORE FUNCTION — fires on every WA button tap/click
-
-     ORDER:
-     1. Generate ONE shared eventId
-     2. Fire browser pixel (fbq) with that eventId
-     3. Fire CAPI via sendBeacon with SAME eventId
-     4. Open WhatsApp after 400ms
-  ───────────────────────────────────────────────────────────── */
-  function goWA(buttonId) {
-    if (_busy) return;
-    _busy = true;
-    setTimeout(function () { _busy = false; }, 1600);
-
-    // ── STEP 1: Generate shared event_id ──────────────────────
-    var eventId = uuid4();
-    console.log('[WA] Button clicked:', buttonId, '| event_id:', eventId);
-
-    // ── STEP 2: Browser Pixel (synchronous, instant) ──────────
-    if (typeof fbq === 'function') {
-      try {
-        fbq('track', 'Lead', {
-          content_name    : 'Digital Skills Program',
-          content_category: 'Online Education',
-          currency        : 'INR',
-          value           : 1,
-          eventID         : eventId,   // ✅ dedup key — matches CAPI below
-        });
-        fbq('track', 'Contact',          { eventID: eventId });
-        fbq('track', 'InitiateCheckout', { eventID: eventId, content_name: buttonId });
-        fbq('trackCustom', 'WAButtonClick', { button_id: buttonId, eventID: eventId });
-        console.log('[Pixel] fbq Lead fired | event_id:', eventId);
-      } catch (e) {
-        console.warn('[Pixel] fbq error:', e);
-      }
-    } else {
-      console.warn('[Pixel] fbq not loaded — ad blocker active?');
+  /* ══════════════════════════════════════════════════════════════
+     FIRE BROWSER PIXEL — with full deduplication eventID
+  ══════════════════════════════════════════════════════════════ */
+  function firePixel(eventId, buttonId) {
+    if (typeof fbq !== 'function') {
+      console.warn('[Pixel] fbq not available');
+      return;
     }
+    var score = SCORE.get();
+    try {
+      fbq('track', 'Lead', {
+        content_name    : 'Digital Skills Program',
+        content_category: 'Online Education',
+        currency        : 'INR',
+        value           : score >= 70 ? 3 : score >= 40 ? 2 : 1, // value based on quality
+        eventID         : eventId,
+      });
+      fbq('track', 'Contact',          { eventID: eventId });
+      fbq('track', 'InitiateCheckout', { eventID: eventId, content_name: buttonId });
+      fbq('trackCustom', 'WAButtonClick', {
+        button_id   : buttonId,
+        lead_score  : score,
+        score_label : SCORE.label(),
+        eventID     : eventId,
+      });
+      console.log('[Pixel] ✅ Lead fired | score:', score, '(' + SCORE.label() + ') | value: $' + (score >= 70 ? 3 : score >= 40 ? 2 : 1));
+    } catch (e) {
+      console.warn('[Pixel] Error:', e);
+    }
+  }
 
-    // ── STEP 3: Server-side CAPI (async, non-blocking) ────────
-    // Pass the SAME eventId so Meta deduplicates correctly
-    sendCAPI('Lead', buttonId, eventId).catch(function (err) {
-      console.warn('[CAPI] sendCAPI error (non-fatal):', err);
+  /* ══════════════════════════════════════════════════════════════
+     CORE: goWA — fires on every WA button tap
+  ══════════════════════════════════════════════════════════════ */
+  function goWA(buttonId) {
+    if (STATE._busy) return;
+    STATE._busy = true;
+    setTimeout(function () { STATE._busy = false; }, 1600);
+
+    var eventId = uuid4();
+    STATE.waOpened = true;
+
+    // Track click history
+    STATE.clickHistory.push({ button: buttonId, ts: timeOnPage() });
+
+    console.log('[WA] ══ Button:', buttonId, '| eventId:', eventId, '| Score:', SCORE.get(), '(' + SCORE.label() + ')');
+
+    // 1. Browser pixel (instant, synchronous)
+    firePixel(eventId, buttonId);
+
+    // 2. Server-side CAPI with full scoring payload
+    sendCAPI('Lead', buttonId, eventId, {
+      click_history : JSON.stringify(STATE.clickHistory),
+      funnel_drop   : STATE.funnelDropPoint,
     });
 
-    // ── STEP 4: Open WhatsApp after 400ms ─────────────────────
-    // 400ms gives pixel + beacon time to fire before page navigates
+    // 3. Open WhatsApp after 400ms
     setTimeout(function () {
-      console.log('[WA] Opening WhatsApp now');
-      window.open(WA_URL, '_blank', 'noopener,noreferrer');
+      console.log('[WA] Opening WhatsApp | score:', SCORE.get());
+      window.open(CFG.WA_URL, '_blank', 'noopener,noreferrer');
     }, 400);
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     BIND ALL BUTTONS — every [data-wa="1"] element
-     Handles: touch (mobile) + click (desktop) + keyboard
-  ───────────────────────────────────────────────────────────── */
-  function bindAll() {
+  /* ══════════════════════════════════════════════════════════════
+     BIND ALL WA BUTTONS
+  ══════════════════════════════════════════════════════════════ */
+  function bindButtons() {
     var buttons = document.querySelectorAll('[data-wa="1"]');
     console.log('[Init] Binding', buttons.length, 'WA buttons');
 
     buttons.forEach(function (el) {
-      var label = el.getAttribute('data-wa-src')
-                || el.id
-                || el.getAttribute('aria-label')
-                || 'unknown_btn';
+      var label = el.getAttribute('data-wa-src') || el.id || el.getAttribute('aria-label') || 'btn';
 
-      // Mobile: touchstart = visual feedback (instant feel)
       el.addEventListener('touchstart', function () {
-        el.style.opacity   = '0.82';
-        el.style.transform = 'scale(0.97)';
+        el.style.opacity = '0.82'; el.style.transform = 'scale(0.97)';
       }, { passive: true });
 
-      // Mobile: touchend = fire event + prevent ghost click
       el.addEventListener('touchend', function (e) {
-        el.style.opacity   = '';
-        el.style.transform = '';
-        e.preventDefault(); // ← blocks the 300ms delayed ghost click
+        el.style.opacity = ''; el.style.transform = '';
+        e.preventDefault();
         goWA(label);
       }, { passive: false });
 
-      // Desktop: click
       el.addEventListener('click', function (e) {
         e.preventDefault();
         goWA(label);
       });
 
-      // Keyboard: Enter or Space
       el.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          goWA(label);
-        }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goWA(label); }
       });
     });
   }
 
-  /* ─────────────────────────────────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════
      STARS
-  ───────────────────────────────────────────────────────────── */
+  ══════════════════════════════════════════════════════════════ */
   function mkStars(id, n) {
-    var c = document.getElementById(id);
-    if (!c) return;
+    var c = document.getElementById(id); if (!c) return;
     var f = document.createDocumentFragment();
     for (var i = 0; i < n; i++) {
-      var s = document.createElement('div');
-      s.className = 'star';
+      var s = document.createElement('div'); s.className = 'star';
       var z = Math.random() * 2 + 0.3;
-      s.style.cssText =
-        'width:' + z + 'px;height:' + z + 'px;' +
-        'top:' + (Math.random() * 100) + '%;left:' + (Math.random() * 100) + '%;' +
-        '--d:' + (2 + Math.random() * 4) + 's;' +
-        '--o:' + (0.18 + Math.random() * 0.55) + ';' +
-        '--dl:' + (Math.random() * 6) + 's;';
+      s.style.cssText = 'width:'+z+'px;height:'+z+'px;top:'+(Math.random()*100)+'%;left:'+(Math.random()*100)+'%;--d:'+(2+Math.random()*4)+'s;--o:'+(0.18+Math.random()*0.55)+';--dl:'+(Math.random()*6)+'s;';
       f.appendChild(s);
     }
     c.appendChild(f);
   }
-  mkStars('st1', 50);
-  mkStars('st2', 28);
+  mkStars('st1', 50); mkStars('st2', 28);
 
-  /* ─────────────────────────────────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════
      HERO PARTICLES
-  ───────────────────────────────────────────────────────────── */
+  ══════════════════════════════════════════════════════════════ */
   var hero = document.getElementById('hero');
   if (hero) {
     var pf = document.createDocumentFragment();
     for (var j = 0; j < 10; j++) {
-      var p  = document.createElement('div');
-      p.className = 'pc';
+      var p = document.createElement('div'); p.className = 'pc';
       var sz = 2 + Math.random() * 2.5;
-      p.style.cssText =
-        'width:' + sz + 'px;height:' + sz + 'px;' +
-        'left:' + (Math.random() * 100) + '%;bottom:' + (Math.random() * 35) + '%;' +
-        '--d:' + (6 + Math.random() * 7) + 's;--dl:' + (Math.random() * 7) + 's;' +
-        'background:' + (Math.random() > 0.5 ? 'rgba(139,92,246,.65)' : 'rgba(232,121,160,.65)') + ';';
+      p.style.cssText = 'width:'+sz+'px;height:'+sz+'px;left:'+(Math.random()*100)+'%;bottom:'+(Math.random()*35)+'%;--d:'+(6+Math.random()*7)+'s;--dl:'+(Math.random()*7)+'s;background:'+(Math.random()>.5?'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';
       pf.appendChild(p);
     }
     hero.appendChild(pf);
   }
 
-  /* ─────────────────────────────────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════
      SCROLL REVEAL
-  ───────────────────────────────────────────────────────────── */
+  ══════════════════════════════════════════════════════════════ */
   var rvEls = document.querySelectorAll('.rv, .rvl');
   if ('IntersectionObserver' in window) {
     var obs = new IntersectionObserver(function (entries) {
@@ -1160,13 +1569,11 @@ footer{
       });
     }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
     rvEls.forEach(function (el) { obs.observe(el); });
-  } else {
-    rvEls.forEach(function (el) { el.classList.add('on'); });
-  }
+  } else { rvEls.forEach(function (el) { el.classList.add('on'); }); }
 
-  /* ─────────────────────────────────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════
      NAV SCROLL DARKEN
-  ───────────────────────────────────────────────────────────── */
+  ══════════════════════════════════════════════════════════════ */
   var nav = document.getElementById('nav');
   if (nav) {
     window.addEventListener('scroll', function () {
@@ -1174,55 +1581,43 @@ footer{
     }, { passive: true });
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     SCROLL DEPTH EVENTS (25 / 50 / 75 / 90%)
-  ───────────────────────────────────────────────────────────── */
-  var depths = { 25: false, 50: false, 75: false, 90: false };
-  window.addEventListener('scroll', function () {
-    var pct = Math.round(
-      ((window.scrollY + window.innerHeight) / document.documentElement.scrollHeight) * 100
-    );
-    [25, 50, 75, 90].forEach(function (d) {
-      if (!depths[d] && pct >= d) {
-        depths[d] = true;
-        if (typeof fbq === 'function') {
-          try { fbq('trackCustom', 'ScrollDepth', { depth: d }); } catch (_) {}
-        }
-        var depthId = uuid4();
-        sendCAPI('ScrollDepth', 'scroll_' + d + 'pct', depthId).catch(function () {});
-        console.log('[Scroll] Depth reached:', d + '%');
-      }
-    });
-  }, { passive: true });
-
-  /* ─────────────────────────────────────────────────────────────
-     30s ENGAGED USER
-  ───────────────────────────────────────────────────────────── */
-  setTimeout(function () {
+  /* ══════════════════════════════════════════════════════════════
+     PAGE LOAD CAPI — ViewContent with initial signals
+  ══════════════════════════════════════════════════════════════ */
+  function sendPageLoad() {
+    var id = uuid4();
     if (typeof fbq === 'function') {
-      try { fbq('trackCustom', 'EngagedUser', { seconds: 30 }); } catch (_) {}
+      try { fbq('track', 'ViewContent', { eventID: id, content_name: CFG.PAGE_NAME }); } catch (_) {}
     }
-    sendCAPI('EngagedUser', 'time_30s', uuid4()).catch(function () {});
-    console.log('[Engage] 30s on page — EngagedUser fired');
-  }, 30000);
-
-  /* ─────────────────────────────────────────────────────────────
-     PAGE LOAD — ViewContent CAPI
-  ───────────────────────────────────────────────────────────── */
-  sendCAPI('ViewContent', 'page_load', uuid4()).then(function () {
-    console.log('[CAPI] ViewContent sent on page load');
-  }).catch(function () {});
-
-  /* ─────────────────────────────────────────────────────────────
-     INIT
-  ───────────────────────────────────────────────────────────── */
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindAll);
-  } else {
-    bindAll();
+    sendCAPI('ViewContent', 'page_load', id, {
+      utm_full: JSON.stringify(STATE.utmParams),
+    });
+    console.log('[PageLoad] ViewContent sent | session:', STATE.sessionId);
   }
 
-  console.log('[Init] Asma Khan tracking system loaded ✅');
+  /* ══════════════════════════════════════════════════════════════
+     INIT ALL SYSTEMS
+  ══════════════════════════════════════════════════════════════ */
+  function init() {
+    initScoring();
+    initTimeBuckets();
+    initScrollTracking();
+    initSectionTracking();
+    initExitIntent();
+    initClickTracking();
+    bindButtons();
+    sendPageLoad();
+
+    console.log('[Init] ✅ Ultra tracking system loaded | Session:', STATE.sessionId);
+    console.log('[Init] UTM:', JSON.stringify(STATE.utmParams));
+    console.log('[Init] Repeat visitor:', STATE.isRepeatVisitor, '| Device:', getDeviceType(), '| Speed:', STATE.connectionSpeed);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 
 })();
 </script>
