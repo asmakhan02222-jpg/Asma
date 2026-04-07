@@ -28,7 +28,12 @@ n.queue=[];t=b.createElement(e);t.async=!0;
 t.src=v;s=b.getElementsByTagName(e)[0];
 s.parentNode.insertBefore(t,s)}(window, document,'script',
 'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '2445995189193091');
+// FIX-DUPPHONE: Pass explicit empty advanced matching + autoConfig:false
+// to prevent Meta auto-injecting business page phone into all Pixel events.
+// The 'duplicate client Phone numbers' diagnostic on ViewContent is caused
+// by Facebook auto-advanced-matching pulling the business phone number and
+// stamping it as ph on every fbq() event including ViewContent.
+fbq('init', '2445995189193091', {}, { autoConfig: false });
 fbq('track', 'PageView');
 fbq('track', 'ViewContent', {
   content_name: 'Asma Khan Landing Page',
@@ -947,7 +952,7 @@ footer{
   //  CONFIG
   // ═══════════════════════════════════════════════════════════════════
   var CFG = {
-    GAS_URL  : 'https://script.google.com/macros/s/AKfycby1zX0b4P2_p9TimkkzHAJuv4wXac2oY6Ii6lnDBkek8MV3EpP47CmvLu_gmzS0Q8vFPQ/exec',
+    GAS_URL  : 'https://script.google.com/macros/s/AKfycbxbPFzOKvDb4g2WMA-Y15GlGsjQemI5JwYGZhwAIVldUmxo-JNCCUB_XD4p_-YUxAJTRw/exec',
     WA_URL   : 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning',
     VERSION  : '8.1',
 
@@ -1538,9 +1543,6 @@ footer{
     if (STATE.eventsCount > 25) return;
     STATE.eventsCount++;
 
-    var phone  = normalizePhone('919967791679');
-    var phoneH = await hashStr(phone);
-
     var payload = {
       event_name   : eventName,
       event_id     : eventId,
@@ -1549,7 +1551,6 @@ footer{
       fingerprint  : IDENTITY.fingerprint,
       visit_id     : IDENTITY.visitId,
       session_id   : IDENTITY.sessionId,
-      phone_hashed : phoneH,
       user_agent   : navigator.userAgent,
 
       // FIX-1 applied: fbc and fbp already resolved at init as raw cookie values
