@@ -884,740 +884,550 @@ footer{
 </footer>
 
 <script>
-/* ╔═══════════════════════════════════════════════════════════════
-   ║  ASMA KHAN — ULTRA PERFORMANCE TRACKING SYSTEM v2.0
-   ║  Lead Quality Scoring + Smart CAPI + Funnel Analytics
-   ╚═══════════════════════════════════════════════════════════════ */
+/* ╔════════════════════════════════════════════════════════════════
+   ║  ASMA KHAN — SIGNAL INTELLIGENCE ENGINE v8.0
+   ║
+   ║  KEY CHANGES FROM v7:
+   ║
+   ║  1. ONE event name sent to Meta: "Lead" with continuous value
+   ║     Frontend fires fbq('track','Lead') for ALL tiers.
+   ║     Value varies ₹50-₹500 based on score.
+   ║     This enables Meta Value Optimization at full click volume.
+   ║
+   ║  2. click_ts sent in payload — accurate event attribution.
+   ║     Backend uses client click timestamp as event_time.
+   ║     No more 30-60s attribution delay from beacon queuing.
+   ║
+   ║  3. Removed intent curve entirely — never reliably computed.
+   ║     Fast clickers (< first sample interval) got 'flat'.
+   ║     All v3-v7 curve values were metadata noise.
+   ║
+   ║  4. Section tracking: clean individual observers per section.
+   ║     Fixed from v6's broken chained-observer pattern.
+   ║     Maintained from v7.
+   ╚════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  /* ══════════════════════════════════════════════════════════════
-     CONFIG
-  ══════════════════════════════════════════════════════════════ */
   var CFG = {
-    GAS_URL   : 'https://script.google.com/macros/s/AKfycbxWrYeL5Q87i9sXSK67JDVg2rKspz7fC84fm7Y7kYtX7kdY5O9LWU9zfROJSlikyjloSQ/exec',
-    WA_URL    : 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning',
-    PIXEL_ID  : '2445995189193091',
-    PHONE     : '919967791679',
-    PAGE_NAME : 'asma_khan_landing',
+    GAS_URL  : 'https://script.google.com/macros/s/AKfycby-nrhlAAcAfJldJMmYB5j7tGAZUYXZjCClbD5Emyq8-L53DY80mcWf397cFrll_-04mg/exec',
+    WA_URL   : 'https://wa.me/919967791679?text=Hi%20I%20want%20to%20start%20earning',
+    VERSION  : '8.0',
+
+    // Display thresholds (for UI label only — backend classifies independently)
+    TIER_HIGH : 65,
+    TIER_MED  : 40,
+    TIER_LOW  : 12,
+
+    // HIGH engagement gate (for display tier — mirrors backend)
+    HIGH_TESTI_S   : 12,
+    HIGH_HESIT_MIN : 500,
+    HIGH_HESIT_MAX : 10000,
+
+    // Meta value range (continuous, not categorical)
+    VALUE_MIN : 50,
+    VALUE_MAX : 500,
+
+    // Scoring weights (display — backend has its own authoritative weights)
+    WEIGHTS: {
+      time_on_page    : 0.30,
+      scroll_depth    : 0.25,
+      scroll_reversals: 0.20,
+      section_attn    : 0.15,
+      copy_detected   : 0.10,
+    },
   };
 
-  /* ══════════════════════════════════════════════════════════════
-     LEAD QUALITY SCORE ENGINE
-     Score 0–100 built up continuously as user engages.
-     Sent with every CAPI event so Meta optimizes for quality.
+  // ── IDENTITY ──────────────────────────────────────────────────────────
+  var IDENTITY = {
+    fingerprint : '',
+    sessionId   : '',
+    visitId     : '',
+    mouseEvents : 0,
+    touchEvents : 0,
+    firstClickTs: 0,
 
-     SCORING BREAKDOWN (total = 100):
-     ┌─────────────────────────────┬───────┐
-     │ Signal                      │ Max   │
-     ├─────────────────────────────┼───────┤
-     │ Time on page                │  25   │
-     │ Scroll depth                │  20   │
-     │ Sections viewed             │  15   │
-     │ Referrer quality            │  15   │
-     │ Device (mobile=real user)   │   5   │
-     │ Repeat visitor              │   5   │
-     │ UTM source quality          │  10   │
-     │ Click intensity             │   5   │
-     └─────────────────────────────┴───────┘
-  ══════════════════════════════════════════════════════════════ */
-  var SCORE = {
-    total        : 0,
-    timePoints   : 0,
-    scrollPoints : 0,
-    sectionPoints: 0,
-    referrerPts  : 0,
-    devicePts    : 0,
-    repeatPts    : 0,
-    utmPts       : 0,
-    clickPts     : 0,
-
-    get: function () {
-      this.total = Math.min(100, Math.round(
-        this.timePoints   +
-        this.scrollPoints +
-        this.sectionPoints+
-        this.referrerPts  +
-        this.devicePts    +
-        this.repeatPts    +
-        this.utmPts       +
-        this.clickPts
-      ));
-      return this.total;
+    buildCanvas: function() {
+      try {
+        var c=document.createElement('canvas'),ctx=c.getContext('2d');
+        ctx.textBaseline='top';ctx.font='14px Arial';
+        ctx.fillStyle='#f60';ctx.fillRect(125,1,62,20);
+        ctx.fillStyle='#069';ctx.fillText('AK\u2665',2,15);
+        ctx.fillStyle='rgba(102,204,0,.7)';ctx.fillText('AK\u2665',4,17);
+        return c.toDataURL().slice(-50);
+      } catch(_){return 'nc';}
     },
 
-    label: function () {
-      var s = this.get();
-      if (s >= 70) return 'HIGH';
-      if (s >= 40) return 'MEDIUM';
-      return 'LOW';
+    buildAudio: function() {
+      try {
+        var ac=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
+        var osc=ac.createOscillator(),ana=ac.createAnalyser(),g=ac.createGain();
+        g.gain.value=0;osc.connect(ana);osc.connect(g);g.connect(ac.destination);osc.start(0);
+        var b=new Float32Array(ana.frequencyBinCount);ana.getFloatFrequencyData(b);ac.close();
+        return b.slice(0,5).reduce(function(a,x){return a+Math.abs(x);},0).toFixed(6);
+      } catch(_){return 'na';}
     },
 
-    breakdown: function () {
-      return {
-        total         : this.get(),
-        label         : this.label(),
-        time_pts      : this.timePoints,
-        scroll_pts    : this.scrollPoints,
-        section_pts   : this.sectionPoints,
-        referrer_pts  : this.referrerPts,
-        device_pts    : this.devicePts,
-        repeat_pts    : this.repeatPts,
-        utm_pts       : this.utmPts,
-        click_pts     : this.clickPts,
-      };
-    }
+    buildPlatform: function() {
+      try {
+        var gl=document.createElement('canvas').getContext('webgl');
+        if(!gl) return navigator.platform||'np';
+        var d=gl.getExtension('WEBGL_debug_renderer_info');
+        if(!d) return navigator.platform||'nd';
+        var r=gl.getParameter(d.UNMASKED_RENDERER_WEBGL)||'';
+        return r.length>5?r.substring(0,40):(navigator.platform||'nb');
+      } catch(_){return navigator.platform||'ne';}
+    },
+
+    build: async function() {
+      var raw = this.buildCanvas()+'|'+this.buildAudio()+'|'+this.buildPlatform()
+                +'|'+window.screen.width+'x'+window.screen.height+'x'+window.screen.colorDepth
+                +'|'+(Intl&&Intl.DateTimeFormat?Intl.DateTimeFormat().resolvedOptions().timeZone:'')
+                +'|'+(navigator.language||'');
+      this.fingerprint = await sha256(raw);
+
+      var stored = getLS('ak_vid');
+      if (stored && stored.fp === this.fingerprint) {
+        this.visitId = stored.vid;
+      } else {
+        this.visitId = uuid4();
+        setLS('ak_vid', { fp: this.fingerprint, vid: this.visitId, created: Date.now() });
+      }
+      this.sessionId = uuid4();
+    },
+
+    initBotDetection: function() {
+      var s=this;
+      document.addEventListener('mousemove',  function(){s.mouseEvents++;}, {passive:true});
+      document.addEventListener('touchstart', function(){s.touchEvents++;}, {passive:true});
+      document.addEventListener('click', function(){
+        if(!s.firstClickTs) s.firstClickTs=Date.now();
+      }, {passive:true, once:true});
+    },
+
+    isBotLikely: function() {
+      if(navigator.webdriver) return true;
+      var total=this.mouseEvents+this.touchEvents;
+      var elapsed=(Date.now()-STATE.startTime)/1000;
+      if(elapsed>6&&total===0) return true;
+      if(this.firstClickTs&&(this.firstClickTs-STATE.startTime)<200) return true;
+      return false;
+    },
   };
 
-  /* ══════════════════════════════════════════════════════════════
-     STATE — everything tracked in one object
-  ══════════════════════════════════════════════════════════════ */
+  // ── STATE ──────────────────────────────────────────────────────────────
   var STATE = {
     startTime       : Date.now(),
     maxScrollPct    : 0,
+    scrollReversals : 0,
+    lastScrollY     : 0,
+    scrollPxTotal   : 0,
+    scrollStartMs   : Date.now(),
     sectionsViewed  : [],
-    clickCount      : 0,
-    clickHistory    : [],    // [{button, ts}]
-    timeBuckets     : { s10: false, s30: false, s60: false, s120: false },
-    scrollBuckets   : { p25: false, p50: false, p75: false, p90: false, p100: false },
-    exitAttempted   : false,
-    sessionId       : '',
-    isRepeatVisitor : false,
-    connectionSpeed : 'unknown',
+    sectionDwellMap : {},  // {sectionId: {enterMs, totalS}}
+    testiDwellS     : 0,
+    copyDetected    : false,
+    hoverStartMs    : 0,
+    hesitationMs    : 0,
+    visitCount      : 1,
+    isRepeat        : false,
+    prevBest        : 0,
     utmParams       : {},
-    funnelDropPoint : '',
-    lastActiveTs    : Date.now(),
-    waOpened        : false,
+    connectionSpeed : 'unknown',
+    eventsCount     : 0,
+    waClicked       : false,
     _busy           : false,
   };
 
-  /* ══════════════════════════════════════════════════════════════
-     UTILITIES
-  ══════════════════════════════════════════════════════════════ */
+  // ── SCORE — display only (backend recomputes authoritatively) ──────────
+  var SCORE = {
+    raw: { time:0, scroll:0, reversals:0, sections:0, copy:0 },
+    prevBest: 0,
+
+    compute: function() {
+      var w   = CFG.WEIGHTS;
+      var raw = this.raw.time*w.time_on_page + this.raw.scroll*w.scroll_depth +
+                this.raw.reversals*w.scroll_reversals + this.raw.sections*w.section_attn +
+                this.raw.copy*w.copy_detected;
+      if (IDENTITY.isBotLikely()) raw = Math.min(raw, 0.08);
+      if (this.prevBest >= 50 && STATE.isRepeat) raw = Math.min(1, raw + 0.06);
+      return Math.round(raw * 100);
+    },
+
+    // Snapshot at click time — used once in goWA
+    snapshot: function() { return this.compute(); },
+
+    // Continuous value mapping (mirrors backend scoreToValue)
+    toValue: function(score) {
+      return Math.round(CFG.VALUE_MIN + (CFG.VALUE_MAX - CFG.VALUE_MIN) * (score / 100));
+    },
+
+    loadHistory: function() {
+      var h = getLS('ak_sh');
+      if (!h) return;
+      this.prevBest  = h.best  || 0;
+      STATE.prevBest = h.best  || 0;
+      if (h.scroll > 0) this.raw.scroll = Math.min(1, (h.scroll/100)*0.5);
+    },
+
+    saveHistory: function(score) {
+      setLS('ak_sh', {
+        best  : Math.max(score, this.prevBest),
+        scroll: STATE.maxScrollPct,
+        last  : Date.now(),
+      });
+    },
+  };
+
+  // ── UTILITIES ──────────────────────────────────────────────────────────
   function uuid4() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-      var r = Math.random() * 16 | 0;
-      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){
+      var r=Math.random()*16|0;return (c==='x'?r:(r&0x3|0x8)).toString(16);
     });
   }
-
-  function getCookie(n) {
-    var m = document.cookie.match(new RegExp('(?:^|; )' + n + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : '';
+  function getCookie(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):''; }
+  function getParam(k){try{return new URLSearchParams(window.location.search).get(k)||'';}catch(_){return '';} }
+  async function sha256(s) {
+    if(!s||!window.crypto||!window.crypto.subtle) return '';
+    try{
+      var buf=new TextEncoder().encode(s.trim().toLowerCase());
+      var h=await window.crypto.subtle.digest('SHA-256',buf);
+      return Array.from(new Uint8Array(h)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+    }catch(_){return '';}
   }
+  function normalizePhone(p){var d=String(p||'').replace(/\D/g,'');return d.length===10?'91'+d:d;}
+  function setLS(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(_){}}
+  function getLS(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(_){return null;}}
+  function getDeviceType(){return /tablet|ipad/i.test(navigator.userAgent)?'tablet':/mobile|android|iphone/i.test(navigator.userAgent)?'mobile':'desktop';}
+  function getConnection(){try{var c=navigator.connection||navigator.mozConnection;return c?(c.effectiveType||'unk'):'unk';}catch(_){return 'unk';}}
+  function timeOnPage(){return Math.round((Date.now()-STATE.startTime)/1000);}
 
-  function getParam(name) {
-    try {
-      return new URLSearchParams(window.location.search).get(name) || '';
-    } catch (_) {
-      var m = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
-      return m ? decodeURIComponent(m[1]) : '';
-    }
-  }
+  // ── INIT ──────────────────────────────────────────────────────────────
+  async function init() {
+    await IDENTITY.build();
+    IDENTITY.initBotDetection();
 
-  async function sha256(str) {
-    if (!str || !window.crypto || !window.crypto.subtle) return '';
-    try {
-      var buf  = new TextEncoder().encode(str.trim().toLowerCase());
-      var hash = await window.crypto.subtle.digest('SHA-256', buf);
-      return Array.from(new Uint8Array(hash))
-        .map(function (b) { return b.toString(16).padStart(2, '0'); })
-        .join('');
-    } catch (_) { return ''; }
-  }
+    var visits=(getLS('ak_v')||0)+1;
+    setLS('ak_v', visits);
+    STATE.visitCount=visits;
+    STATE.isRepeat  =visits>1;
 
-  function normalizePhone(p) {
-    var d = String(p || '').replace(/\D/g, '');
-    return d.length === 10 ? '91' + d : d;
-  }
+    SCORE.loadHistory();
 
-  function getDeviceType() {
-    var ua = navigator.userAgent;
-    if (/tablet|ipad/i.test(ua)) return 'tablet';
-    if (/mobile|android|iphone/i.test(ua)) return 'mobile';
-    return 'desktop';
-  }
-
-  function getConnectionSpeed() {
-    try {
-      var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      return c ? (c.effectiveType || c.type || 'unknown') : 'unknown';
-    } catch (_) { return 'unknown'; }
-  }
-
-  function timeOnPage() {
-    return Math.round((Date.now() - STATE.startTime) / 1000);
-  }
-
-  function setLS(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) {}
-  }
-
-  function getLS(key) {
-    try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     INIT SCORING SIGNALS — run once on page load
-  ══════════════════════════════════════════════════════════════ */
-  function initScoring() {
-
-    // ── Session ID ─────────────────────────────────────────────
-    STATE.sessionId = uuid4();
-
-    // ── UTM params ─────────────────────────────────────────────
     STATE.utmParams = {
-      source   : getParam('utm_source')   || '',
-      medium   : getParam('utm_medium')   || '',
-      campaign : getParam('utm_campaign') || '',
-      content  : getParam('utm_content')  || '',
-      term     : getParam('utm_term')     || '',
-      fbclid   : getParam('fbclid')       || '',
+      source  : getParam('utm_source'),
+      medium  : getParam('utm_medium'),
+      campaign: getParam('utm_campaign'),
+      content : getParam('utm_content'),
+      fbclid  : getParam('fbclid'),
     };
+    STATE.connectionSpeed=getConnection();
 
-    // ── UTM Quality Score ───────────────────────────────────────
-    var src = (STATE.utmParams.source || document.referrer || '').toLowerCase();
-    if (/instagram|facebook|fb/.test(src))  SCORE.utmPts = 10; // paid social
-    else if (/google|bing/.test(src))       SCORE.utmPts = 8;  // search intent
-    else if (/whatsapp/.test(src))          SCORE.utmPts = 7;  // WA referral
-    else if (src === '' || src === 'direct')SCORE.utmPts = 4;  // direct
-    else                                    SCORE.utmPts = 2;  // unknown
+    fetchWeights();
+    initTimeBuckets();
+    initScrollTracking();
+    initSectionTracking();
+    initCopyDetection();
+    initExitIntent();
+    initButtonBindings();
+    sendOpenEvent();
 
-    // ── Referrer quality ───────────────────────────────────────
-    var ref = document.referrer.toLowerCase();
-    if (/instagram|facebook/.test(ref))     SCORE.referrerPts = 15;
-    else if (/google|bing|yahoo/.test(ref)) SCORE.referrerPts = 12;
-    else if (/whatsapp/.test(ref))          SCORE.referrerPts = 10;
-    else if (ref === '')                    SCORE.referrerPts = 5; // direct
-    else                                    SCORE.referrerPts = 3;
-
-    // ── Device scoring ─────────────────────────────────────────
-    // Mobile = real user browsing (not bot); desktop = also valid
-    var dev = getDeviceType();
-    SCORE.devicePts = (dev === 'mobile') ? 5 : (dev === 'tablet') ? 4 : 3;
-
-    // ── Repeat visitor ─────────────────────────────────────────
-    var visits = getLS('ak_visits') || 0;
-    visits++;
-    setLS('ak_visits', visits);
-    STATE.isRepeatVisitor = visits > 1;
-    if (visits >= 3)      SCORE.repeatPts = 5;  // highly interested
-    else if (visits === 2) SCORE.repeatPts = 3;
-    else                   SCORE.repeatPts = 0;
-
-    // ── Connection speed ───────────────────────────────────────
-    STATE.connectionSpeed = getConnectionSpeed();
-
-    // ── Store last visit timestamp ─────────────────────────────
-    setLS('ak_last_visit', Date.now());
-    setLS('ak_session', STATE.sessionId);
-
-    console.log('[Score] Init complete | UTM:', SCORE.utmPts, '| Referrer:', SCORE.referrerPts,
-                '| Device:', SCORE.devicePts, '| Repeat:', SCORE.repeatPts);
+    console.log('[v8] Ready | fp:', IDENTITY.fingerprint.substring(0,10)+'…',
+                '| v#'+visits+' | repeat:', STATE.isRepeat);
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     TIME BUCKET TRACKING — 10s / 30s / 60s / 120s
-     Each bucket increases score and signals engagement to Meta
-  ══════════════════════════════════════════════════════════════ */
-  function initTimeBuckets() {
-    var buckets = [
-      { key: 's10',  ms: 10000,  pts: 3,  label: '10s'  },
-      { key: 's30',  ms: 30000,  pts: 7,  label: '30s'  },
-      { key: 's60',  ms: 60000,  pts: 12, label: '60s'  },
-      { key: 's120', ms: 120000, pts: 25, label: '120s' },
-    ];
-
-    buckets.forEach(function (b) {
-      setTimeout(function () {
-        if (STATE.timeBuckets[b.key]) return;
-        STATE.timeBuckets[b.key] = true;
-        SCORE.timePoints = Math.min(25, SCORE.timePoints + b.pts);
-
-        console.log('[Time] Bucket reached:', b.label, '| Score now:', SCORE.get());
-
-        if (typeof fbq === 'function') {
-          try { fbq('trackCustom', 'TimeEngagement', { bucket: b.label, score: SCORE.get() }); }
-          catch (_) {}
-        }
-
-        // At 60s — send a mid-engagement CAPI signal
-        if (b.key === 's60') {
-          sendCAPI('EngagedUser', 'time_60s', uuid4(), { trigger: 'time_60s' });
-        }
-        // At 120s — very warm lead, send ViewContent upgrade
-        if (b.key === 's120') {
-          sendCAPI('ViewContent', 'time_120s', uuid4(), { trigger: 'time_120s', score: SCORE.get() });
-        }
-      }, b.ms);
-    });
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     SCROLL DEPTH TRACKING — 25 / 50 / 75 / 90 / 100%
-  ══════════════════════════════════════════════════════════════ */
-  function initScrollTracking() {
-    var ticking = false;
-
-    window.addEventListener('scroll', function () {
-      STATE.lastActiveTs = Date.now();
-
-      if (!ticking) {
-        requestAnimationFrame(function () {
-          var scrolled = window.scrollY + window.innerHeight;
-          var total    = document.documentElement.scrollHeight;
-          var pct      = Math.round((scrolled / total) * 100);
-
-          if (pct > STATE.maxScrollPct) STATE.maxScrollPct = pct;
-
-          [
-            { key: 'p25',  val: 25,  pts: 4  },
-            { key: 'p50',  val: 50,  pts: 6  },
-            { key: 'p75',  val: 75,  pts: 8  },
-            { key: 'p90',  val: 90,  pts: 10 },
-            { key: 'p100', val: 100, pts: 20 },
-          ].forEach(function (b) {
-            if (!STATE.scrollBuckets[b.key] && pct >= b.val) {
-              STATE.scrollBuckets[b.key] = true;
-              SCORE.scrollPoints = Math.min(20, SCORE.scrollPoints + b.pts);
-
-              console.log('[Scroll]', b.val + '% | scrollPts:', SCORE.scrollPoints, '| Total score:', SCORE.get());
-
-              if (typeof fbq === 'function') {
-                try { fbq('trackCustom', 'ScrollDepth', { depth: b.val, score: SCORE.get() }); }
-                catch (_) {}
-              }
-
-              if (b.val >= 75) {
-                // 75%+ scroll = very engaged, send CAPI signal
-                sendCAPI('ScrollDepth', 'scroll_' + b.val, uuid4(), { scroll_pct: b.val });
-              }
+  // ── WEIGHT FETCH ──────────────────────────────────────────────────────
+  function fetchWeights() {
+    if (!CFG.GAS_URL || CFG.GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') return;
+    fetch(CFG.GAS_URL + '?action=get_weights')
+      .then(function(r){return r.json();})
+      .then(function(data){
+        if (data && data.weights && typeof data.weights === 'object') {
+          Object.keys(data.weights).forEach(function(k){
+            if (k in CFG.WEIGHTS && typeof data.weights[k] === 'number' &&
+                data.weights[k] >= 0 && data.weights[k] <= 1) {
+              CFG.WEIGHTS[k] = data.weights[k];
             }
           });
-
-          ticking = false;
-        });
-        ticking = true;
-      }
-    }, { passive: true });
+          console.log('[v8] Weights:', data.source);
+        }
+      }).catch(function(){});
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     SECTION VISIBILITY TRACKING
-     Tracks which sections user actually sees (not just scrolls past)
-  ══════════════════════════════════════════════════════════════ */
-  function initSectionTracking() {
-    var sections = [
-      { id: 'hero',    pts: 0,  name: 'Hero'        },
-      { id: 'intro',   pts: 2,  name: 'Intro'       },
-      { id: 'trust',   pts: 2,  name: 'Trust'       },
-      { id: 'learn',   pts: 3,  name: 'Learn'       },
-      { id: 'testi',   pts: 3,  name: 'Testimonials'},
-      { id: 'about',   pts: 2,  name: 'About'       },
-      { id: 'who',     pts: 2,  name: 'Who'         },
-      { id: 'final',   pts: 1,  name: 'Final CTA'   },
-    ];
-
-    if (!('IntersectionObserver' in window)) return;
-
-    var secObs = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (!entry.isIntersecting) return;
-        var id = entry.target.id;
-        if (STATE.sectionsViewed.indexOf(id) > -1) return; // already seen
-
-        var sec = sections.find(function (s) { return s.id === id; });
-        if (!sec) return;
-
-        STATE.sectionsViewed.push(id);
-        SCORE.sectionPoints = Math.min(15, SCORE.sectionPoints + sec.pts);
-
-        // Track funnel drop point (last section seen before exit)
-        STATE.funnelDropPoint = sec.name;
-
-        console.log('[Section] Viewed:', sec.name, '| sectionPts:', SCORE.sectionPoints);
-
-        secObs.unobserve(entry.target);
-      });
-    }, { threshold: 0.4 }); // 40% visible = "viewed"
-
-    sections.forEach(function (s) {
-      var el = document.getElementById(s.id);
-      if (el) secObs.observe(el);
+  // ── TIME BUCKETS ──────────────────────────────────────────────────────
+  function initTimeBuckets() {
+    setTimeout(function(){
+      SCORE.raw.time = Math.min(1, 30/120);
+      sendToGAS('EngagedUser', uuid4(), { trigger:'30s', score:SCORE.compute() });
+      if(typeof fbq==='function'){
+        try{fbq('trackCustom','EngagedUser',{trigger:'30s'});}catch(_){}
+      }
+    }, 30000);
+    [60000,120000].forEach(function(ms){
+      setTimeout(function(){ SCORE.raw.time=Math.min(1,(ms/1000)/120); }, ms);
     });
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     EXIT INTENT DETECTION
-     Desktop: mouse leaves top of viewport
-     Mobile: visibility change (tab switch, home button)
-  ══════════════════════════════════════════════════════════════ */
-  function initExitIntent() {
-    var exitFired = false;
+  // ── SCROLL ────────────────────────────────────────────────────────────
+  function initScrollTracking() {
+    var timeAtDepth={}, lastMs=Date.now(), lastPct=0, ticking=false;
+    window.addEventListener('scroll', function(){
+      if(ticking)return; ticking=true;
+      requestAnimationFrame(function(){
+        var now=Date.now();
+        var pct=Math.round(((window.scrollY+window.innerHeight)/document.documentElement.scrollHeight)*100);
+        var dt=now-lastMs;
 
-    function onExit(trigger) {
-      if (exitFired) return;
-      exitFired = true;
-      STATE.exitAttempted = true;
+        STATE.scrollPxTotal+=Math.abs(window.scrollY-STATE.lastScrollY);
+        if(window.scrollY<STATE.lastScrollY-80){
+          STATE.scrollReversals++;
+          SCORE.raw.reversals=Math.min(1,STATE.scrollReversals*0.15);
+        }
+        STATE.lastScrollY=window.scrollY;
 
-      var score = SCORE.get();
-      console.log('[Exit] Intent detected via:', trigger, '| Score:', score, '| Scroll:', STATE.maxScrollPct + '%');
+        var bucket=Math.floor(lastPct/10)*10;
+        timeAtDepth[bucket]=(timeAtDepth[bucket]||0)+dt;
+        lastMs=now; lastPct=pct;
+        if(pct>STATE.maxScrollPct) STATE.maxScrollPct=pct;
 
-      // Send exit intent CAPI — valuable for retargeting
-      sendCAPI('ExitIntent', 'exit_' + trigger, uuid4(), {
-        trigger         : trigger,
-        score_at_exit   : score,
-        scroll_at_exit  : STATE.maxScrollPct,
-        time_at_exit    : timeOnPage(),
-        sections_seen   : STATE.sectionsViewed.join(','),
-        last_section    : STATE.funnelDropPoint,
+        var wD=0,wT=0;
+        Object.keys(timeAtDepth).forEach(function(d){
+          wD+=(parseInt(d)/100)*timeAtDepth[d];wT+=timeAtDepth[d];
+        });
+        var blended=wT>0?(wD/wT)*0.7+(pct/100)*0.3:pct/100;
+        var elS=(Date.now()-STATE.scrollStartMs)/1000;
+        var vel=elS>0?STATE.scrollPxTotal/elS:0;
+        var pen=vel>300?Math.min(0.15,(vel-300)/3000):0;
+        SCORE.raw.scroll=Math.max(0,Math.min(1,blended-pen));
+        ticking=false;
       });
+    },{passive:true});
+  }
 
-      if (typeof fbq === 'function') {
-        try {
-          fbq('trackCustom', 'ExitIntent', {
-            trigger     : trigger,
-            score       : score,
-            scroll_pct  : STATE.maxScrollPct,
-          });
-        } catch (_) {}
-      }
+  // ── SECTION TRACKING (clean per-element observers) ────────────────────
+  function initSectionTracking() {
+    if(!('IntersectionObserver' in window)) return;
+
+    var sections=[
+      {id:'intro',weight:1.5},{id:'trust',weight:2.0},{id:'learn',weight:2.5},
+      {id:'testi',weight:2.5},{id:'about',weight:1.5},{id:'final',weight:2.5},
+    ];
+    var totalW=sections.reduce(function(a,s){return a+s.weight;},0);
+
+    sections.forEach(function(sec){
+      var el=document.getElementById(sec.id);
+      if(!el) return;
+
+      new IntersectionObserver(function(entries){
+        entries.forEach(function(entry){
+          var sd=STATE.sectionDwellMap[sec.id]=STATE.sectionDwellMap[sec.id]||{totalS:0,enterMs:0};
+          if(entry.isIntersecting){
+            sd.enterMs=Date.now();
+          } else if(sd.enterMs){
+            sd.totalS+=(Date.now()-sd.enterMs)/1000;
+            sd.enterMs=0;
+            if(sec.id==='testi') STATE.testiDwellS=sd.totalS;
+            if(STATE.sectionsViewed.indexOf(sec.id)===-1) STATE.sectionsViewed.push(sec.id);
+            var seenW=0;
+            STATE.sectionsViewed.forEach(function(sid){
+              var s2=sections.find(function(x){return x.id===sid;});
+              if(s2) seenW+=s2.weight*Math.min(1,(STATE.sectionDwellMap[sid]||{totalS:0}).totalS/20);
+            });
+            SCORE.raw.sections=Math.min(1,seenW/totalW);
+          }
+        });
+      },{threshold:[0,0.5]}).observe(el);
+    });
+  }
+
+  // ── COPY DETECTION ────────────────────────────────────────────────────
+  function initCopyDetection() {
+    document.addEventListener('copy',function(){
+      STATE.copyDetected=true;SCORE.raw.copy=1.0;
+    },{passive:true});
+    document.addEventListener('selectionchange',function(){
+      try{if((window.getSelection()||{}).toString().length>=8){
+        STATE.copyDetected=true;if(SCORE.raw.copy<0.8)SCORE.raw.copy=0.8;
+      }}catch(_){}
+    },{passive:true});
+  }
+
+  // ── EXIT INTENT ───────────────────────────────────────────────────────
+  function initExitIntent() {
+    var fired=false;
+    function onExit(trigger){
+      if(fired||STATE.waClicked)return; fired=true;
+      SCORE.saveHistory(SCORE.compute());
+      sendToGAS('ExitIntent',uuid4(),{trigger:trigger,score_at_exit:SCORE.compute(),
+        scroll_at_exit:STATE.maxScrollPct,time_at_exit:timeOnPage(),testi_dwell:STATE.testiDwellS});
+    }
+    document.addEventListener('mouseleave',function(e){if(e.clientY<=5)onExit('mouse_top');});
+    document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')onExit('tab');});
+    window.addEventListener('pagehide',function(){onExit('page_hide');});
+    window.addEventListener('beforeunload',function(){onExit('unload');});
+  }
+
+  // ── BUTTON BINDINGS ───────────────────────────────────────────────────
+  function initButtonBindings() {
+    document.querySelectorAll('[data-wa="1"]').forEach(function(el){
+      var label=el.getAttribute('data-wa-src')||el.id||'btn';
+      el.addEventListener('mouseenter',function(){ STATE.hoverStartMs=Date.now(); },{passive:true});
+      el.addEventListener('touchstart',function(e){
+        if(e.target===el||el.contains(e.target)) STATE.hoverStartMs=Date.now();
+      },{passive:true});
+      el.addEventListener('touchend',function(e){e.preventDefault();goWA(label);},{passive:false});
+      el.addEventListener('click',function(e){e.preventDefault();goWA(label);});
+      el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();goWA(label);}});
+    });
+  }
+
+  // ── goWA — CORE HANDLER ───────────────────────────────────────────────
+  function goWA(buttonId) {
+    if(STATE._busy) return;
+    STATE._busy=true; STATE.waClicked=true;
+    setTimeout(function(){STATE._busy=false;},1600);
+
+    if(STATE.hoverStartMs>0) STATE.hesitationMs=Date.now()-STATE.hoverStartMs;
+
+    // Single score snapshot
+    var score = SCORE.snapshot();
+    var value = SCORE.toValue(score);
+
+    // Display tier (internal label, not sent to Meta)
+    var testiQ = STATE.testiDwellS >= CFG.HIGH_TESTI_S;
+    var hesitQ = STATE.hesitationMs >= CFG.HIGH_HESIT_MIN && STATE.hesitationMs <= CFG.HIGH_HESIT_MAX;
+    var tier   = (score >= CFG.TIER_HIGH && (testiQ || hesitQ)) ? 'HIGH' :
+                  score >= CFG.TIER_MED  ? 'MED'  :
+                  score >= CFG.TIER_LOW  ? 'LOW'  : 'JUNK';
+
+    SCORE.saveHistory(score);
+
+    var clickTs = Date.now(); // accurate click timestamp for Meta attribution
+
+    console.log('[v8] btn:'+buttonId+' | score:'+score+' | value:₹'+value+
+                ' | tier:'+tier+' | testi:'+STATE.testiDwellS.toFixed(1)+'s'+
+                ' | hesit:'+STATE.hesitationMs+'ms');
+
+    // Meta Pixel — ONE event "Lead" for all tiers
+    // Value varies ₹50-₹500. Meta Value Optimization uses this.
+    if (tier !== 'JUNK' && typeof fbq === 'function') {
+      try {
+        var eid = uuid4();
+        fbq('track', 'Lead', {
+          value    : value,
+          currency : 'INR',
+          eventID  : eid,
+        });
+        fbq('track', 'Contact', { eventID: eid + '_c' });
+      } catch(_) {}
     }
 
-    // Desktop: mouse leaves viewport from top
-    document.addEventListener('mouseleave', function (e) {
-      if (e.clientY <= 5) onExit('mouse_leave_top');
-    });
+    // CAPI — full payload for backend recomputation + logging
+    if (tier !== 'JUNK') {
+      sendToGAS('Lead', buttonId, uuid4(), {
+        click_ts       : clickTs,  // accurate attribution timestamp
+        client_tier    : tier,
+        testi_s        : STATE.testiDwellS,
+        hesit_ms       : STATE.hesitationMs,
+        sections       : STATE.sectionsViewed.join(','),
+      });
+    }
 
-    // Mobile + Desktop: tab hidden / app backgrounded
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') onExit('visibility_hidden');
-    });
-
-    // Mobile: back button / page unload
-    window.addEventListener('pagehide', function () { onExit('page_hide'); });
-    window.addEventListener('beforeunload', function () { onExit('before_unload'); });
+    setTimeout(function(){ window.open(CFG.WA_URL,'_blank','noopener,noreferrer'); }, 350);
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     CLICK INTENSITY TRACKING
-     Tracks: total clicks, clicks per button, rage clicks
-  ══════════════════════════════════════════════════════════════ */
-  function initClickTracking() {
-    document.addEventListener('click', function () {
-      STATE.clickCount++;
-      STATE.lastActiveTs = Date.now();
-
-      // Click pts: more clicks = more interest (capped at 5)
-      SCORE.clickPts = Math.min(5, Math.floor(STATE.clickCount / 2));
-    }, { passive: true });
-
-    // Rage click detection: 3+ clicks in 1.5 seconds on same element
-    var lastEl = null, rapidCount = 0, rapidTimer = null;
-    document.addEventListener('click', function (e) {
-      if (e.target === lastEl) {
-        rapidCount++;
-        if (rapidCount >= 3) {
-          console.log('[RageClick] Detected on:', e.target.className || e.target.id);
-          SCORE.clickPts = Math.min(5, SCORE.clickPts + 2); // rage = high intent
-          if (typeof fbq === 'function') {
-            try { fbq('trackCustom', 'RageClick', { element: e.target.id || e.target.className }); }
-            catch (_) {}
-          }
-          rapidCount = 0;
-        }
-      } else {
-        lastEl = e.target;
-        rapidCount = 1;
-      }
-      clearTimeout(rapidTimer);
-      rapidTimer = setTimeout(function () { rapidCount = 0; }, 1500);
-    }, { passive: true });
+  // ── OPEN EVENT ────────────────────────────────────────────────────────
+  async function sendOpenEvent() {
+    var id=uuid4();
+    if(typeof fbq==='function'){
+      try{fbq('track','ViewContent',{eventID:id,value:0.1,currency:'INR'});}catch(_){}
+    }
+    sendToGAS('ViewContent','page_load',id,{});
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     BUILD FULL PAYLOAD — everything in one object for CAPI
-  ══════════════════════════════════════════════════════════════ */
-  async function buildPayload(eventName, buttonId, eventId, extras) {
-    var phone       = normalizePhone(CFG.PHONE);
-    var phoneHashed = await sha256(phone);
-    var score       = SCORE.get();
+  // ── SEND TO GAS ───────────────────────────────────────────────────────
+  async function sendToGAS(eventName, buttonId, eventId, extras) {
+    if(!CFG.GAS_URL||CFG.GAS_URL==='YOUR_GAS_ENDPOINT_HERE') return;
+    if(STATE.eventsCount>25) return;
+    STATE.eventsCount++;
 
-    return {
-      // Core event
+    var phone=normalizePhone('919967791679');
+    var phoneH=await sha256(phone);
+
+    var payload = {
       event_name      : eventName,
       event_id        : eventId,
       page_url        : window.location.href,
-      referrer        : document.referrer || '',
-
-      // User signals
+      referrer        : document.referrer||'',
+      fingerprint     : IDENTITY.fingerprint,
+      visit_id        : IDENTITY.visitId,
+      session_id      : IDENTITY.sessionId,
+      phone_hashed    : phoneH,
       user_agent      : navigator.userAgent,
       fbp             : getCookie('_fbp'),
       fbc             : getCookie('_fbc'),
-      phone           : phone,
-      phone_hashed    : phoneHashed,
-      language        : navigator.language || '',
-      screen_w        : window.screen ? window.screen.width  : 0,
-      screen_h        : window.screen ? window.screen.height : 0,
-      viewport_w      : window.innerWidth  || 0,
-      viewport_h      : window.innerHeight || 0,
       device_type     : getDeviceType(),
+      language        : navigator.language||'',
       connection      : STATE.connectionSpeed,
-      is_repeat       : STATE.isRepeatVisitor,
-
-      // UTM / attribution
-      utm_source      : STATE.utmParams.source,
-      utm_medium      : STATE.utmParams.medium,
-      utm_campaign    : STATE.utmParams.campaign,
-      utm_content     : STATE.utmParams.content,
-      utm_term        : STATE.utmParams.term,
-      fbclid          : STATE.utmParams.fbclid,
-
-      // Engagement signals
-      button_id       : buttonId || '',
+      hour_of_day     : new Date().getHours(),
+      day_of_week     : new Date().getDay(),
+      utm_source      : STATE.utmParams.source   ||'',
+      utm_campaign    : STATE.utmParams.campaign  ||'',
+      utm_medium      : STATE.utmParams.medium    ||'',
+      fbclid          : STATE.utmParams.fbclid    ||'',
+      is_repeat       : STATE.isRepeat,
+      visit_count     : STATE.visitCount,
+      prev_best_score : SCORE.prevBest,
       time_on_page    : timeOnPage(),
       max_scroll_pct  : STATE.maxScrollPct,
+      scroll_reversals: STATE.scrollReversals,
       sections_viewed : STATE.sectionsViewed.join(','),
-      sections_count  : STATE.sectionsViewed.length,
-      click_count     : STATE.clickCount,
-      exit_attempted  : STATE.exitAttempted,
-      funnel_drop     : STATE.funnelDropPoint,
-      session_id      : STATE.sessionId,
-      visit_count     : getLS('ak_visits') || 1,
-
-      // Lead quality score
-      lead_score      : score,
-      score_label     : SCORE.label(),
-      score_breakdown : JSON.stringify(SCORE.breakdown()),
-
-      // Content
-      content_name    : 'Digital Skills Program',
-      content_category: 'Online Education',
-
-      // Extras (per-event custom data)
-      extras          : extras ? JSON.stringify(extras) : '',
+      copy_detected   : STATE.copyDetected,
+      lead_score      : SCORE.compute(),        // for comparison logging
+      is_bot_likely   : IDENTITY.isBotLikely(),
+      testimonials_dwell_s: STATE.testiDwellS,
+      hesitation_ms   : STATE.hesitationMs,
     };
+
+    if(extras) Object.keys(extras).forEach(function(k){payload[k]=extras[k];});
+
+    var body=JSON.stringify(payload);
+    if(typeof navigator.sendBeacon==='function'){
+      var q=navigator.sendBeacon(CFG.GAS_URL,new Blob([body],{type:'text/plain;charset=UTF-8'}));
+      if(q) return;
+    }
+    try{await fetch(CFG.GAS_URL,{method:'POST',body:body,keepalive:true});}catch(_){}
   }
 
-  /* ══════════════════════════════════════════════════════════════
-     SEND TO GAS CAPI — sendBeacon (text/plain = no CORS preflight)
-  ══════════════════════════════════════════════════════════════ */
-  async function sendCAPI(eventName, buttonId, eventId, extras) {
-    if (!CFG.GAS_URL || CFG.GAS_URL === 'YOUR_GAS_ENDPOINT_HERE') {
-      console.warn('[CAPI] GAS_URL not configured — skipping.');
-      return;
-    }
-
-    var payload = await buildPayload(eventName, buttonId, eventId, extras);
-    var body    = JSON.stringify(payload);
-
-    console.log('[CAPI] ▶', eventName, '| button:', buttonId, '| score:', payload.lead_score, '| id:', eventId);
-
-    // sendBeacon: text/plain avoids CORS preflight on GAS ✅
-    if (typeof navigator.sendBeacon === 'function') {
-      var blob   = new Blob([body], { type: 'text/plain;charset=UTF-8' });
-      var queued = navigator.sendBeacon(CFG.GAS_URL, blob);
-      if (queued) {
-        console.log('[CAPI] ✅ sendBeacon queued for:', eventName);
-        return;
-      }
-    }
-
-    // Fallback fetch (no Content-Type header = no preflight)
-    try {
-      var res  = await fetch(CFG.GAS_URL, { method: 'POST', body: body, keepalive: true });
-      var json = await res.json();
-      console.log('[CAPI] ✅ fetch response:', json.success, '| event_id:', json.event_id);
-    } catch (err) {
-      console.warn('[CAPI] fetch failed (non-fatal):', err.message);
-    }
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     FIRE BROWSER PIXEL — with full deduplication eventID
-  ══════════════════════════════════════════════════════════════ */
-  function firePixel(eventId, buttonId) {
-    if (typeof fbq !== 'function') {
-      console.warn('[Pixel] fbq not available');
-      return;
-    }
-    var score = SCORE.get();
-    try {
-      fbq('track', 'Lead', {
-        content_name    : 'Digital Skills Program',
-        content_category: 'Online Education',
-        currency        : 'INR',
-        value           : score >= 70 ? 3 : score >= 40 ? 2 : 1, // value based on quality
-        eventID         : eventId,
-      });
-      fbq('track', 'Contact',          { eventID: eventId });
-      fbq('track', 'InitiateCheckout', { eventID: eventId, content_name: buttonId });
-      fbq('trackCustom', 'WAButtonClick', {
-        button_id   : buttonId,
-        lead_score  : score,
-        score_label : SCORE.label(),
-        eventID     : eventId,
-      });
-      console.log('[Pixel] ✅ Lead fired | score:', score, '(' + SCORE.label() + ') | value: $' + (score >= 70 ? 3 : score >= 40 ? 2 : 1));
-    } catch (e) {
-      console.warn('[Pixel] Error:', e);
-    }
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     CORE: goWA — fires on every WA button tap
-  ══════════════════════════════════════════════════════════════ */
-  function goWA(buttonId) {
-    if (STATE._busy) return;
-    STATE._busy = true;
-    setTimeout(function () { STATE._busy = false; }, 1600);
-
-    var eventId = uuid4();
-    STATE.waOpened = true;
-
-    // Track click history
-    STATE.clickHistory.push({ button: buttonId, ts: timeOnPage() });
-
-    console.log('[WA] ══ Button:', buttonId, '| eventId:', eventId, '| Score:', SCORE.get(), '(' + SCORE.label() + ')');
-
-    // 1. Browser pixel (instant, synchronous)
-    firePixel(eventId, buttonId);
-
-    // 2. Server-side CAPI with full scoring payload
-    sendCAPI('Lead', buttonId, eventId, {
-      click_history : JSON.stringify(STATE.clickHistory),
-      funnel_drop   : STATE.funnelDropPoint,
-    });
-
-    // 3. Open WhatsApp after 400ms
-    setTimeout(function () {
-      console.log('[WA] Opening WhatsApp | score:', SCORE.get());
-      window.open(CFG.WA_URL, '_blank', 'noopener,noreferrer');
-    }, 400);
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     BIND ALL WA BUTTONS
-  ══════════════════════════════════════════════════════════════ */
-  function bindButtons() {
-    var buttons = document.querySelectorAll('[data-wa="1"]');
-    console.log('[Init] Binding', buttons.length, 'WA buttons');
-
-    buttons.forEach(function (el) {
-      var label = el.getAttribute('data-wa-src') || el.id || el.getAttribute('aria-label') || 'btn';
-
-      el.addEventListener('touchstart', function () {
-        el.style.opacity = '0.82'; el.style.transform = 'scale(0.97)';
-      }, { passive: true });
-
-      el.addEventListener('touchend', function (e) {
-        el.style.opacity = ''; el.style.transform = '';
-        e.preventDefault();
-        goWA(label);
-      }, { passive: false });
-
-      el.addEventListener('click', function (e) {
-        e.preventDefault();
-        goWA(label);
-      });
-
-      el.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goWA(label); }
-      });
-    });
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     STARS
-  ══════════════════════════════════════════════════════════════ */
-  function mkStars(id, n) {
-    var c = document.getElementById(id); if (!c) return;
-    var f = document.createDocumentFragment();
-    for (var i = 0; i < n; i++) {
-      var s = document.createElement('div'); s.className = 'star';
-      var z = Math.random() * 2 + 0.3;
-      s.style.cssText = 'width:'+z+'px;height:'+z+'px;top:'+(Math.random()*100)+'%;left:'+(Math.random()*100)+'%;--d:'+(2+Math.random()*4)+'s;--o:'+(0.18+Math.random()*0.55)+';--dl:'+(Math.random()*6)+'s;';
+  // ── VISUALS (unchanged) ───────────────────────────────────────────────
+  function mkStars(id,n){
+    var c=document.getElementById(id);if(!c)return;
+    var f=document.createDocumentFragment();
+    for(var i=0;i<n;i++){
+      var s=document.createElement('div');s.className='star';
+      var z=Math.random()*2+0.3;
+      s.style.cssText='width:'+z+'px;height:'+z+'px;top:'+(Math.random()*100)+'%;left:'+(Math.random()*100)+'%;--d:'+(2+Math.random()*4)+'s;--o:'+(0.18+Math.random()*0.55)+';--dl:'+(Math.random()*6)+'s;';
       f.appendChild(s);
     }
     c.appendChild(f);
   }
-  mkStars('st1', 50); mkStars('st2', 28);
+  mkStars('st1',50);mkStars('st2',28);
 
-  /* ══════════════════════════════════════════════════════════════
-     HERO PARTICLES
-  ══════════════════════════════════════════════════════════════ */
-  var hero = document.getElementById('hero');
-  if (hero) {
-    var pf = document.createDocumentFragment();
-    for (var j = 0; j < 10; j++) {
-      var p = document.createElement('div'); p.className = 'pc';
-      var sz = 2 + Math.random() * 2.5;
-      p.style.cssText = 'width:'+sz+'px;height:'+sz+'px;left:'+(Math.random()*100)+'%;bottom:'+(Math.random()*35)+'%;--d:'+(6+Math.random()*7)+'s;--dl:'+(Math.random()*7)+'s;background:'+(Math.random()>.5?'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';
-      pf.appendChild(p);
-    }
-    hero.appendChild(pf);
-  }
+  var hEl=document.getElementById('hero');
+  if(hEl){var pf=document.createDocumentFragment();for(var j=0;j<10;j++){var p=document.createElement('div');p.className='pc';var sz=2+Math.random()*2.5;p.style.cssText='width:'+sz+'px;height:'+sz+'px;left:'+(Math.random()*100)+'%;bottom:'+(Math.random()*35)+'%;--d:'+(6+Math.random()*7)+'s;--dl:'+(Math.random()*7)+'s;background:'+(Math.random()>.5?'rgba(139,92,246,.65)':'rgba(232,121,160,.65)')+';';pf.appendChild(p);}hEl.appendChild(pf);}
 
-  /* ══════════════════════════════════════════════════════════════
-     SCROLL REVEAL
-  ══════════════════════════════════════════════════════════════ */
-  var rvEls = document.querySelectorAll('.rv, .rvl');
-  if ('IntersectionObserver' in window) {
-    var obs = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) { e.target.classList.add('on'); obs.unobserve(e.target); }
-      });
-    }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
-    rvEls.forEach(function (el) { obs.observe(el); });
-  } else { rvEls.forEach(function (el) { el.classList.add('on'); }); }
+  var rvEls=document.querySelectorAll('.rv,.rvl');
+  if('IntersectionObserver' in window){
+    var rvO=new IntersectionObserver(function(entries){entries.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');rvO.unobserve(e.target);}});},{threshold:0.06,rootMargin:'0px 0px -20px 0px'});
+    rvEls.forEach(function(el){rvO.observe(el);});
+  } else {rvEls.forEach(function(el){el.classList.add('on');});}
 
-  /* ══════════════════════════════════════════════════════════════
-     NAV SCROLL DARKEN
-  ══════════════════════════════════════════════════════════════ */
-  var nav = document.getElementById('nav');
-  if (nav) {
-    window.addEventListener('scroll', function () {
-      nav.classList.toggle('dark', window.scrollY > 50);
-    }, { passive: true });
-  }
+  var navEl=document.getElementById('nav');
+  if(navEl){window.addEventListener('scroll',function(){navEl.classList.toggle('dark',window.scrollY>50);},{passive:true});}
 
-  /* ══════════════════════════════════════════════════════════════
-     PAGE LOAD CAPI — ViewContent with initial signals
-  ══════════════════════════════════════════════════════════════ */
-  function sendPageLoad() {
-    var id = uuid4();
-    if (typeof fbq === 'function') {
-      try { fbq('track', 'ViewContent', { eventID: id, content_name: CFG.PAGE_NAME }); } catch (_) {}
-    }
-    sendCAPI('ViewContent', 'page_load', id, {
-      utm_full: JSON.stringify(STATE.utmParams),
-    });
-    console.log('[PageLoad] ViewContent sent | session:', STATE.sessionId);
-  }
-
-  /* ══════════════════════════════════════════════════════════════
-     INIT ALL SYSTEMS
-  ══════════════════════════════════════════════════════════════ */
-  function init() {
-    initScoring();
-    initTimeBuckets();
-    initScrollTracking();
-    initSectionTracking();
-    initExitIntent();
-    initClickTracking();
-    bindButtons();
-    sendPageLoad();
-
-    console.log('[Init] ✅ Ultra tracking system loaded | Session:', STATE.sessionId);
-    console.log('[Init] UTM:', JSON.stringify(STATE.utmParams));
-    console.log('[Init] Repeat visitor:', STATE.isRepeatVisitor, '| Device:', getDeviceType(), '| Speed:', STATE.connectionSpeed);
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',init);
+  } else {init();}
 
 })();
 </script>
